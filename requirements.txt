@@ -1,0 +1,27 @@
+# ── Core runtime ──────────────────────────────────────────────────────────────
+# Audio recording (WASAPI on Windows)
+sounddevice>=0.4.6
+numpy>=1.24.0
+
+# Local Whisper transcription (CPU or CUDA GPU)
+faster-whisper>=1.0.0
+
+# Global hotkeys
+keyboard>=0.13.5
+
+# Clipboard + paste simulation
+pyperclip>=1.8.2
+pyautogui>=0.9.54
+
+# HTTP client (cloud transcription + AI enhancement)
+httpx>=0.27.0
+
+# System tray icon
+pystray>=0.19.5
+Pillow>=10.0.0
+
+# ── Optional — only needed for GPU acceleration ────────────────────────────
+# Uncomment if you have an NVIDIA GPU and CUDA installed:
+#torch>=2.0.0          # required by faster-whisper GPU mode
+#nvidia-cublas-cu12    # CUDA dependencies (Windows)
+#nvidia-cudnn-cu12
