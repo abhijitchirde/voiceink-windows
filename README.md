@@ -68,6 +68,22 @@ run.bat
 
 Use this during development or just to try the app without building an executable.
 
+### 4. Start recording
+
+Once VoiceInk is running, you will see its icon in the system tray. The default hotkey is **Right Ctrl**.
+
+| Action                  | How                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| **Start recording**     | Press Right Ctrl once                                                        |
+| **Stop and transcribe** | Press Right Ctrl again (or hold Right Ctrl to record, release to transcribe) |
+| **Cancel**              | Click the × on the overlay pill                                              |
+
+The transcribed text is automatically pasted at your cursor.
+
+> **Transcription history:** Right-click the VoiceInk tray icon and choose **History** to browse all your previously transcribed text.
+
+> **Want a different hotkey?** Right-click the VoiceInk tray icon → **Settings**, then change the hotkey and mode to whatever suits you.
+
 ---
 
 ## Building a Standalone .exe

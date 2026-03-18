@@ -90,3 +90,6 @@ logs/
 *.msi
 *.zip
 *.tar.gz
+
+# Claude
+.claude

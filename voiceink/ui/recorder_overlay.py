@@ -1,38 +1,68 @@
 """
-Mini recorder overlay — Windows equivalent of the floating MiniRecorder view.
+Mini recorder overlay — floating pill with animated waveform.
 
-A small, always-on-top frameless window that shows:
-  - Current state (idle / recording / transcribing / enhancing)
-  - Audio level bar (when recording)
-  - Last transcription result
-  - Cancel button
+Shows:
+  - Left dot: red (recording) or yellow (transcribing/enhancing)
+  - Animated waveform bars driven by real audio levels
+  - Close button (top-right)
 """
 
+import ctypes
+import ctypes.wintypes
+import math
+import random
+import time
 import tkinter as tk
-from tkinter import ttk
-import threading
 from typing import Optional, Callable
 
 from voiceink.services.engine import RecordingState
 
 
-# Colours (dark theme, matches VoiceInk Mac aesthetic)
-BG_DARK     = "#1a1a1a"
-BG_CARD     = "#2a2a2a"
-ACCENT      = "#6366f1"   # indigo
-ACCENT_DIM  = "#4f46e5"
-SUCCESS     = "#22c55e"
-ERROR_RED   = "#ef4444"
-TEXT_WHITE  = "#f8fafc"
-TEXT_MUTED  = "#94a3b8"
-BAR_BG      = "#3f3f46"
+# --- Colours ---
+BG_PILL     = "#1e1e2e"   # dark grey/charcoal pill background
+BORDER_CLR  = "#2e2e42"   # subtle dark border
+ICON_CLR    = "#ffffff"   # white icon
+WAVE_REC    = "#ffffff"   # white waveform bars when recording
+WAVE_TRANS  = "#f59e0b"   # amber/yellow waveform bars when transcribing
+WAVE_DIM    = "#3a3a55"   # dim colour for idle bars
+CLOSE_CLR   = "#64647a"
+CLOSE_HOV   = "#a0a0b8"
+
+# --- Waveform layout ---
+NUM_BARS    = 18
+BAR_WIDTH   = 2
+BAR_GAP     = 3            # 3px gap prevents rounded caps from touching
+BAR_MAX_H   = 30          # max bar height — nearly full pill height
+BAR_MIN_H   = 2
+WAVE_W      = NUM_BARS * (BAR_WIDTH + BAR_GAP) - BAR_GAP
+WAVE_H      = BAR_MAX_H + 4
+
+# Status dot
+DOT_SIZE    = 10   # diameter of the status dot in pixels
+DOT_REC     = "#ef4444"  # red when recording
+DOT_TRANS   = "#f59e0b"  # yellow when transcribing (matches WAVE_TRANS)
+
+# Close button size (drawn as a compact ×)
+CLOSE_SIZE  = 10   # drawn × diameter in pixels
+
+# Canvas sizes
+ICON_SIZE   = 20   # close canvas width
+ICON_GAP    = 8    # equal horizontal gap between every element AND the pill edges
+
+# Dot canvas is just wide enough to hold the dot with equal padding
+DOT_CANVAS_W = DOT_SIZE + ICON_GAP * 2  # total canvas width for dot
+
+# Pill dimensions
+PILL_W  = ICON_GAP * 3 + DOT_CANVAS_W + WAVE_W + ICON_SIZE
+PILL_H  = 40
+
 
 
 class RecorderOverlay:
     """
-    Floating overlay window.
+    Floating overlay pill.
     Must be created on the main thread.
-    All update methods are safe to call from any thread.
+    All public update methods are safe to call from any thread.
     """
 
     def __init__(self, root: tk.Tk, settings):
@@ -44,13 +74,16 @@ class RecorderOverlay:
         self._state = RecordingState.IDLE
         self._level_avg: float = 0.0
         self._level_peak: float = 0.0
-        self._status_text = ""
-        self._last_transcription = ""
+
+        # Waveform bar heights (smoothed)
+        self._bar_heights = [BAR_MIN_H] * NUM_BARS
+        # Phase offsets for idle/transcribing animation
+        self._phase_offsets = [random.uniform(0, 2 * math.pi) for _ in range(NUM_BARS)]
+
+        self._anim_after_id: Optional[str] = None
+        self._last_level_time: float = 0.0
 
         self.on_cancel: Optional[Callable] = None
-        self.on_copy: Optional[Callable[[str], None]] = None
-
-        self._bar_anim_id: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -69,15 +102,13 @@ class RecorderOverlay:
     def update_level(self, avg: float, peak: float):
         self._level_avg = avg
         self._level_peak = peak
-        self._root.after(0, self._update_level_bar)
+        self._last_level_time = time.monotonic()
 
     def update_status(self, text: str):
-        self._status_text = text
-        self._root.after(0, self._refresh_ui)
+        pass  # removed
 
     def set_transcription(self, raw: str, enhanced: Optional[str]):
-        self._last_transcription = enhanced if enhanced else raw
-        self._root.after(0, self._refresh_ui)
+        pass  # removed
 
     # ------------------------------------------------------------------
     # Private — window creation
@@ -93,93 +124,95 @@ class RecorderOverlay:
         w = self._window
 
         w.withdraw()
-        w.overrideredirect(True)      # no title bar
+        w.overrideredirect(True)
         w.attributes("-topmost", True)
-        w.configure(bg=BG_DARK)
-        w.attributes("-alpha", 0.96)
+        w.configure(bg=BG_PILL)
+        w.attributes("-alpha", 0.97)
 
-        # Rounded-corner effect via a thin border frame
-        outer = tk.Frame(w, bg=ACCENT, padx=1, pady=1)
+        # Outer frame fills the window background
+        outer = tk.Frame(w, bg=BG_PILL)
         outer.pack(fill="both", expand=True)
 
-        inner = tk.Frame(outer, bg=BG_DARK, padx=16, pady=12)
-        inner.pack(fill="both", expand=True)
+        # Row is centered inside the outer frame using place()
+        # This ensures equal ICON_GAP on all sides with NO element stretching.
+        row = tk.Frame(outer, bg=BG_PILL)
+        row.place(relx=0.5, rely=0.5, anchor="center")
 
-        # --- Header row ---
-        header = tk.Frame(inner, bg=BG_DARK)
-        header.pack(fill="x")
-
-        self._dot = tk.Label(header, text="●", bg=BG_DARK, fg=ACCENT,
-                             font=("Segoe UI", 10))
-        self._dot.pack(side="left")
-
-        self._title_label = tk.Label(
-            header, text="VoiceInk", bg=BG_DARK, fg=TEXT_WHITE,
-            font=("Segoe UI", 11, "bold"), padx=6,
+        # --- Left status dot canvas ---
+        self._dot_canvas = tk.Canvas(
+            row, width=DOT_CANVAS_W, height=PILL_H,
+            bg=BG_PILL, highlightthickness=0, bd=0,
         )
-        self._title_label.pack(side="left")
-
-        cancel_btn = tk.Button(
-            header, text="✕", bg=BG_DARK, fg=TEXT_MUTED,
-            relief="flat", bd=0, cursor="hand2",
-            font=("Segoe UI", 10),
-            command=self._handle_cancel,
-            activebackground=BG_DARK, activeforeground=ERROR_RED,
-        )
-        cancel_btn.pack(side="right")
-
-        # --- Status label ---
-        self._status_label = tk.Label(
-            inner, text="Ready", bg=BG_DARK, fg=TEXT_MUTED,
-            font=("Segoe UI", 9), anchor="w",
-        )
-        self._status_label.pack(fill="x", pady=(4, 0))
-
-        # --- Audio level bar ---
-        self._bar_frame = tk.Frame(inner, bg=BG_DARK)
-        self._bar_frame.pack(fill="x", pady=(6, 0))
-
-        self._bar_bg = tk.Canvas(
-            self._bar_frame, bg=BAR_BG, height=6,
-            highlightthickness=0, bd=0,
-        )
-        self._bar_bg.pack(fill="x")
-        self._bar_fill = self._bar_bg.create_rectangle(
-            0, 0, 0, 6, fill=ACCENT, outline="",
+        self._dot_canvas.pack(side="left", padx=(0, ICON_GAP))
+        # Draw initial dot (will be updated by _refresh_ui)
+        self._dot_id = self._dot_canvas.create_oval(
+            DOT_CANVAS_W // 2 - DOT_SIZE // 2,
+            PILL_H // 2 - DOT_SIZE // 2,
+            DOT_CANVAS_W // 2 + DOT_SIZE // 2,
+            PILL_H // 2 + DOT_SIZE // 2,
+            fill=DOT_REC, outline="",
         )
 
-        # --- Transcription text ---
-        text_frame = tk.Frame(inner, bg=BG_CARD, padx=8, pady=6)
-        text_frame.pack(fill="x", pady=(8, 0))
-
-        self._text_label = tk.Label(
-            text_frame,
-            text="Press hotkey to start recording",
-            bg=BG_CARD, fg=TEXT_WHITE,
-            font=("Segoe UI", 9),
-            wraplength=280,
-            justify="left",
-            anchor="w",
+        # --- Waveform canvas (fixed size, NOT expanded) ---
+        self._wave_canvas = tk.Canvas(
+            row, width=WAVE_W, height=PILL_H,
+            bg=BG_PILL, highlightthickness=0, bd=0,
         )
-        self._text_label.pack(fill="x")
+        self._wave_canvas.pack(side="left", padx=(0, ICON_GAP))
 
-        # --- Copy button ---
-        self._copy_btn = tk.Button(
-            inner, text="Copy", bg=BG_CARD, fg=TEXT_MUTED,
-            relief="flat", bd=0, cursor="hand2",
-            font=("Segoe UI", 8),
-            command=self._handle_copy,
-            activebackground=BG_CARD, activeforeground=TEXT_WHITE,
-            pady=4,
+        # --- Close canvas ---
+        self._close_canvas = tk.Canvas(
+            row, width=ICON_SIZE, height=PILL_H,
+            bg=BG_PILL, highlightthickness=0, bd=0,
+            cursor="hand2",
         )
-        self._copy_btn.pack(fill="x", pady=(4, 0))
+        self._close_canvas.pack(side="left")
+
+        self._draw_close_icon()
+        self._close_canvas.bind("<Button-1>", lambda _e: self._handle_cancel())
+        self._close_canvas.bind("<Enter>",
+            lambda _e: self._draw_close_icon(hover=True))
+        self._close_canvas.bind("<Leave>",
+            lambda _e: self._draw_close_icon(hover=False))
+
+        # Pre-create plain rectangle bars
+        self._bar_ids: list[int] = []
+        mid = PILL_H // 2
+        for i in range(NUM_BARS):
+            x0 = i * (BAR_WIDTH + BAR_GAP)
+            x1 = x0 + BAR_WIDTH
+            bid = self._wave_canvas.create_rectangle(
+                x0, mid - BAR_MIN_H // 2,
+                x1, mid + BAR_MIN_H // 2,
+                fill=WAVE_REC, outline="",
+            )
+            self._bar_ids.append(bid)
 
         self._position_window()
         w.deiconify()
+        w.update_idletasks()
+        # Apply full pill-shaped rounded corners
+        self._apply_rounded_corners(w)
         self._visible = True
         self._refresh_ui()
+        self._start_animation()
+
+    def _apply_rounded_corners(self, window: tk.Toplevel):
+        """Apply a fully pill-shaped clip region (radius = PILL_H // 2) via SetWindowRgn."""
+        try:
+            hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
+            if hwnd == 0:
+                hwnd = window.winfo_id()
+            radius = PILL_H // 2  # full half-circle on each end → true pill shape
+            rgn = ctypes.windll.gdi32.CreateRoundRectRgn(
+                0, 0, PILL_W + 1, PILL_H + 1, radius * 2, radius * 2
+            )
+            ctypes.windll.user32.SetWindowRgn(hwnd, rgn, True)
+        except Exception:
+            pass  # graceful fallback
 
     def _hide_main(self):
+        self._stop_animation()
         if self._window:
             self._window.withdraw()
             self._visible = False
@@ -187,98 +220,128 @@ class RecorderOverlay:
     def _position_window(self):
         if not self._window:
             return
-        width, height = 320, 160
         pos = self._settings.get_str("recorder_position") or "bottom_right"
         sw = self._root.winfo_screenwidth()
         sh = self._root.winfo_screenheight()
         margin = 24
 
         if pos == "bottom_right":
-            x, y = sw - width - margin, sh - height - margin - 48
+            x, y = sw - PILL_W - margin, sh - PILL_H - margin - 48
         elif pos == "bottom_left":
-            x, y = margin, sh - height - margin - 48
+            x, y = margin, sh - PILL_H - margin - 48
         elif pos == "bottom_center":
-            x, y = (sw - width) // 2, sh - height - margin - 48
+            x, y = (sw - PILL_W) // 2, sh - PILL_H - margin - 48
         elif pos == "top_right":
-            x, y = sw - width - margin, margin
+            x, y = sw - PILL_W - margin, margin
         elif pos == "top_left":
             x, y = margin, margin
         else:  # center
-            x, y = (sw - width) // 2, (sh - height) // 2
+            x, y = (sw - PILL_W) // 2, (sh - PILL_H) // 2
 
-        self._window.geometry(f"{width}x{height}+{x}+{y}")
+        self._window.geometry(f"{PILL_W}x{PILL_H}+{x}+{y}")
 
     # ------------------------------------------------------------------
-    # Private — UI refresh
+    # Animation loop
+    # ------------------------------------------------------------------
+
+    def _start_animation(self):
+        self._stop_animation()
+        self._animate()
+
+    def _stop_animation(self):
+        if self._anim_after_id and self._root:
+            try:
+                self._root.after_cancel(self._anim_after_id)
+            except Exception:
+                pass
+        self._anim_after_id = None
+
+    def _animate(self):
+        """Called every ~40 ms (~25 fps) to update the waveform."""
+        if not self._visible or not self._window:
+            return
+
+        state = self._state
+        t = time.monotonic()
+        mid = PILL_H // 2
+
+        if state == RecordingState.RECORDING:
+            # Volume-reactive: amplify mic RMS → bar heights with smooth rise/fall.
+            raw = self._level_avg
+            age = t - self._last_level_time
+            if age > 0.15:
+                raw *= max(0.0, 1.0 - (age - 0.15) * 6)
+            amplified = min(1.0, math.sqrt(raw * 8.0))
+            colour = WAVE_REC
+            for i, bid in enumerate(self._bar_ids):
+                if amplified < 0.02:
+                    target_h = BAR_MIN_H
+                else:
+                    centre_weight = 1.0 - abs(i - (NUM_BARS - 1) / 2) / ((NUM_BARS - 1) / 2) * 0.35
+                    noise = random.uniform(0.80, 1.20)
+                    target_h = max(BAR_MIN_H, int(BAR_MAX_H * amplified * centre_weight * noise))
+                cur = self._bar_heights[i]
+                alpha = 0.5 if target_h > cur else 0.25
+                self._bar_heights[i] = int(cur + (target_h - cur) * alpha)
+                h = self._bar_heights[i]
+                x0 = i * (BAR_WIDTH + BAR_GAP)
+                x1 = x0 + BAR_WIDTH
+                self._wave_canvas.coords(bid, x0, mid - h // 2, x1, mid + h // 2)
+                self._wave_canvas.itemconfigure(bid, fill=colour)
+
+        elif state in (RecordingState.TRANSCRIBING, RecordingState.ENHANCING):
+            # Gentle sine-wave shimmer in yellow
+            colour = WAVE_TRANS
+            for i, bid in enumerate(self._bar_ids):
+                phase = self._phase_offsets[i]
+                h = int(BAR_MIN_H + (BAR_MAX_H * 0.45) * (0.5 + 0.5 * math.sin(t * 3.5 + phase)))
+                self._bar_heights[i] = h
+                x0 = i * (BAR_WIDTH + BAR_GAP)
+                x1 = x0 + BAR_WIDTH
+                self._wave_canvas.coords(bid, x0, mid - h // 2, x1, mid + h // 2)
+                self._wave_canvas.itemconfigure(bid, fill=colour)
+
+        else:
+            colour = WAVE_DIM
+            for i, bid in enumerate(self._bar_ids):
+                phase = self._phase_offsets[i]
+                h = int(BAR_MIN_H + 2 * (0.5 + 0.5 * math.sin(t * 1.2 + phase)))
+                x0 = i * (BAR_WIDTH + BAR_GAP)
+                x1 = x0 + BAR_WIDTH
+                self._wave_canvas.coords(bid, x0, mid - h // 2, x1, mid + h // 2)
+                self._wave_canvas.itemconfigure(bid, fill=colour)
+
+        self._anim_after_id = self._root.after(40, self._animate)
+
+    # ------------------------------------------------------------------
+    # UI refresh
     # ------------------------------------------------------------------
 
     def _refresh_ui(self):
         if not self._window or not self._visible:
             return
+        self._draw_dot()
 
-        state = self._state
-
-        if state == RecordingState.RECORDING:
-            self._dot.configure(fg=ERROR_RED)
-            self._title_label.configure(text="Recording...")
-            status = self._status_text or "Listening — press hotkey to stop"
-            self._status_label.configure(text=status, fg=ERROR_RED)
-            self._bar_frame.pack(fill="x", pady=(6, 0))
-        elif state == RecordingState.TRANSCRIBING:
-            self._dot.configure(fg=TEXT_MUTED)
-            self._title_label.configure(text="Transcribing...")
-            self._status_label.configure(
-                text=self._status_text or "Processing audio...", fg=TEXT_MUTED
-            )
-            self._bar_frame.pack_forget()
-        elif state == RecordingState.ENHANCING:
-            self._dot.configure(fg=ACCENT)
-            self._title_label.configure(text="Enhancing...")
-            self._status_label.configure(
-                text=self._status_text or "AI is enhancing...", fg=ACCENT
-            )
-            self._bar_frame.pack_forget()
-        else:  # IDLE / ERROR
-            self._dot.configure(fg=SUCCESS if self._last_transcription else ACCENT)
-            self._title_label.configure(text="VoiceInk")
-            self._status_label.configure(
-                text=self._status_text or "Ready — press hotkey to record",
-                fg=TEXT_MUTED,
-            )
-            self._bar_frame.pack_forget()
-
-        if self._last_transcription:
-            display = self._last_transcription[:200]
-            if len(self._last_transcription) > 200:
-                display += "..."
-            self._text_label.configure(text=display, fg=TEXT_WHITE)
-            self._copy_btn.configure(state="normal")
+    def _draw_dot(self):
+        """Update the status dot colour based on current state."""
+        if self._state in (RecordingState.TRANSCRIBING, RecordingState.ENHANCING):
+            colour = DOT_TRANS
         else:
-            self._text_label.configure(
-                text="Press hotkey to start recording", fg=TEXT_MUTED
-            )
-            self._copy_btn.configure(state="disabled")
+            colour = DOT_REC
+        self._dot_canvas.itemconfigure(self._dot_id, fill=colour)
 
-    def _update_level_bar(self):
-        if not self._window or not self._visible:
-            return
-        if self._state != RecordingState.RECORDING:
-            return
-        try:
-            bar_width = self._bar_bg.winfo_width()
-            fill_width = max(4, int(bar_width * self._level_avg))
-            self._bar_bg.coords(self._bar_fill, 0, 0, fill_width, 6)
-            # Colour shifts red when loud
-            intensity = self._level_peak
-            if intensity > 0.85:
-                colour = ERROR_RED
-            elif intensity > 0.5:
-                colour = "#f59e0b"  # amber
-            else:
-                colour = ACCENT
-            self._bar_bg.itemconfigure(self._bar_fill, fill=colour)
-        except Exception:
-            pass
+    def _draw_close_icon(self, hover: bool = False):
+        """Draw a compact 10×10 × on the close canvas."""
+        c = self._close_canvas
+        c.delete("all")
+        cx, cy = ICON_SIZE // 2, PILL_H // 2
+        r = CLOSE_SIZE // 2   # half-size arm reach
+        col = CLOSE_HOV if hover else ICON_CLR
+        lw = 1
+        c.create_line(cx - r, cy - r, cx + r, cy + r,
+                      fill=col, width=lw, capstyle="round")
+        c.create_line(cx + r, cy - r, cx - r, cy + r,
+                      fill=col, width=lw, capstyle="round")
 
     # ------------------------------------------------------------------
     # Button handlers
@@ -287,7 +350,3 @@ class RecorderOverlay:
     def _handle_cancel(self):
         if self.on_cancel:
             self.on_cancel()
-
-    def _handle_copy(self):
-        if self._last_transcription and self.on_copy:
-            self.on_copy(self._last_transcription)

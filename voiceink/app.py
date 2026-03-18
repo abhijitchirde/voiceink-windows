@@ -104,7 +104,6 @@ class VoiceInkApp:
 
     def _wire_overlay(self):
         self._overlay.on_cancel = self._handle_cancel
-        self._overlay.on_copy = self._handle_copy
 
     # ------------------------------------------------------------------
     # Engine callbacks (may be called from background threads)
@@ -115,10 +114,11 @@ class VoiceInkApp:
         if state == RecordingState.RECORDING:
             self._overlay.show()
             self._update_tray_icon(recording=True)
-        elif state == RecordingState.IDLE:
-            self._update_tray_icon(recording=False)
-            # Keep overlay visible after transcription so user can read result
         elif state in (RecordingState.TRANSCRIBING, RecordingState.ENHANCING):
+            self._overlay.show()
+            self._update_tray_icon(recording=False)
+        elif state == RecordingState.IDLE:
+            self._overlay.hide()
             self._update_tray_icon(recording=False)
 
     def _on_transcription(self, raw: str, enhanced: Optional[str]):
@@ -212,7 +212,7 @@ class VoiceInkApp:
 
     def run(self):
         self._build_tray()
-        self._overlay.show()  # show overlay on startup
+        # Overlay is hidden at startup; appears only when recording/transcribing
         try:
             self._root.mainloop()
         except KeyboardInterrupt:

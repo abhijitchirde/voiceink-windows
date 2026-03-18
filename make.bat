@@ -54,6 +54,19 @@ echo   BUILD SUCCESSFUL
 echo   Executable: %CD%\dist\VoiceInk\VoiceInk.exe
 echo ============================================================
 echo.
+
+REM ── Desktop shortcut ─────────────────────────────────────────
+echo Create a desktop shortcut for VoiceInk? (Y/N)
+set /p shortcut_choice=
+if /i "!shortcut_choice!"=="Y" (
+    powershell -Command "$ws=New-Object -ComObject WScript.Shell;$lnk=$ws.CreateShortcut([System.IO.Path]::Combine($env:USERPROFILE,'Desktop','VoiceInk.lnk'));$lnk.TargetPath='%CD%\dist\VoiceInk\VoiceInk.exe';$lnk.WorkingDirectory='%CD%\dist\VoiceInk';$lnk.Description='VoiceInk - Voice Transcription';$lnk.Save()"
+    echo Desktop shortcut created.
+) else (
+    echo Skipping desktop shortcut.
+)
+echo.
+
+REM ── Run now? ──────────────────────────────────────────────────
 echo Run VoiceInk now? (Y/N)
 set /p choice=
 if /i "!choice!"=="Y" start "" "%CD%\dist\VoiceInk\VoiceInk.exe"
