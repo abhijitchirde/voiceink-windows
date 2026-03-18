@@ -43,7 +43,7 @@ DOT_REC     = "#ef4444"  # red when recording
 DOT_TRANS   = "#f59e0b"  # yellow when transcribing (matches WAVE_TRANS)
 
 # Close button size (drawn as a compact ×)
-CLOSE_SIZE  = 10   # drawn × diameter in pixels
+CLOSE_SIZE  = 9    # drawn × arm reach in pixels
 
 # Canvas sizes
 ICON_SIZE   = 20   # close canvas width
@@ -53,7 +53,7 @@ ICON_GAP    = 8    # equal horizontal gap between every element AND the pill edg
 DOT_CANVAS_W = DOT_SIZE + ICON_GAP * 2  # total canvas width for dot
 
 # Pill dimensions
-PILL_W  = ICON_GAP * 3 + DOT_CANVAS_W + WAVE_W + ICON_SIZE
+PILL_W  = ICON_GAP * 4 + DOT_CANVAS_W + WAVE_W + ICON_SIZE
 PILL_H  = 40
 
 
@@ -166,7 +166,7 @@ class RecorderOverlay:
             bg=BG_PILL, highlightthickness=0, bd=0,
             cursor="hand2",
         )
-        self._close_canvas.pack(side="left")
+        self._close_canvas.pack(side="left", padx=(0, ICON_GAP))
 
         self._draw_close_icon()
         self._close_canvas.bind("<Button-1>", lambda _e: self._handle_cancel())
@@ -289,6 +289,12 @@ class RecorderOverlay:
                 self._wave_canvas.coords(bid, x0, mid - h // 2, x1, mid + h // 2)
                 self._wave_canvas.itemconfigure(bid, fill=colour)
 
+            # Blink the dot at ~1 Hz (on for 600 ms, off for 400 ms)
+            blink_phase = t % 1.0          # 0.0 → 1.0 over each second
+            dot_visible = blink_phase < 0.6
+            dot_fill = DOT_REC if dot_visible else BG_PILL
+            self._dot_canvas.itemconfigure(self._dot_id, fill=dot_fill)
+
         elif state in (RecordingState.TRANSCRIBING, RecordingState.ENHANCING):
             # Gentle sine-wave shimmer in yellow
             colour = WAVE_TRANS
@@ -301,6 +307,9 @@ class RecorderOverlay:
                 self._wave_canvas.coords(bid, x0, mid - h // 2, x1, mid + h // 2)
                 self._wave_canvas.itemconfigure(bid, fill=colour)
 
+            # Solid yellow dot during transcription/enhancement
+            self._dot_canvas.itemconfigure(self._dot_id, fill=DOT_TRANS)
+
         else:
             colour = WAVE_DIM
             for i, bid in enumerate(self._bar_ids):
@@ -310,6 +319,9 @@ class RecorderOverlay:
                 x1 = x0 + BAR_WIDTH
                 self._wave_canvas.coords(bid, x0, mid - h // 2, x1, mid + h // 2)
                 self._wave_canvas.itemconfigure(bid, fill=colour)
+
+            # Solid red dot in idle state (shouldn't normally be visible)
+            self._dot_canvas.itemconfigure(self._dot_id, fill=DOT_REC)
 
         self._anim_after_id = self._root.after(40, self._animate)
 
@@ -331,13 +343,13 @@ class RecorderOverlay:
         self._dot_canvas.itemconfigure(self._dot_id, fill=colour)
 
     def _draw_close_icon(self, hover: bool = False):
-        """Draw a compact 10×10 × on the close canvas."""
+        """Draw a bold rounded × on the close canvas, matching the reference icon."""
         c = self._close_canvas
         c.delete("all")
         cx, cy = ICON_SIZE // 2, PILL_H // 2
-        r = CLOSE_SIZE // 2   # half-size arm reach
-        col = CLOSE_HOV if hover else ICON_CLR
-        lw = 1
+        r = CLOSE_SIZE // 2   # arm reach from centre
+        col = "#a0a0b8" if hover else ICON_CLR
+        lw = 2
         c.create_line(cx - r, cy - r, cx + r, cy + r,
                       fill=col, width=lw, capstyle="round")
         c.create_line(cx + r, cy - r, cx - r, cy + r,

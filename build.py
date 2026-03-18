@@ -45,6 +45,8 @@ def build():
         "--specpath", str(build_dir),
         "--noconfirm",
         "--clean",
+        "--icon", str(ROOT / "assets" / "favicon.ico"),
+        "--add-data", str(ROOT / "assets") + ";assets",
         # Hidden imports that PyInstaller may miss
         "--hidden-import", "voiceink",
         "--hidden-import", "voiceink.app",

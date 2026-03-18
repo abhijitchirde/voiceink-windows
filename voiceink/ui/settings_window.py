@@ -12,6 +12,7 @@ from voiceink.services.transcription import LOCAL_MODELS, MODELS_DIR
 from voiceink.services.ai_enhancement import PROVIDER_CONFIG, AVAILABLE_MODELS
 from voiceink.services.recorder import AudioRecorder
 from voiceink.models.prompts import Prompt, prompt_store
+from voiceink.models.transcription import store as transcription_store, TranscriptionRecord
 import uuid
 
 # ── Colours ──────────────────────────────────────────────────────────────────
@@ -95,9 +96,9 @@ class SettingsWindow:
         self._window = w
         w.title("VoiceInk Settings")
         w.configure(bg=BG)
-        w.resizable(False, False)
+        w.resizable(True, True)
         w.attributes("-topmost", False)
-        w.geometry("560x620")
+        w.geometry("860x620")
 
         # Notebook (tabs)
         style = ttk.Style()
@@ -119,11 +120,19 @@ class SettingsWindow:
             "AI":            self._build_ai,
             "Audio":         self._build_audio,
             "Prompts":       self._build_prompts,
+            "History":       self._build_history,
         }
         for name, builder in tabs.items():
             frame = tk.Frame(nb, bg=BG, padx=20, pady=16)
             nb.add(frame, text=name)
             builder(frame)
+
+        # Reload history whenever the History tab is selected
+        def _on_tab_change(event):
+            selected = nb.tab(nb.select(), "text")
+            if selected == "History" and hasattr(self, "_history_reload"):
+                self._history_reload()
+        nb.bind("<<NotebookTabChanged>>", _on_tab_change)
 
     # ── General ──────────────────────────────────────────────────────────────
 
@@ -467,6 +476,227 @@ class SettingsWindow:
             rebuild_prompt_list()
 
         _button(frame, "Add Prompt", add_prompt, accent=True).pack(anchor="w", pady=(6, 0))
+
+    # ── History ───────────────────────────────────────────────────────────────
+
+    def _build_history(self, frame):
+        """Embed the full transcription history UI inside the History tab."""
+        from tkinter import messagebox as _mb
+
+        # State
+        records: list = []
+        filtered: list = []
+        selected_idx: list = [None]  # mutable container
+
+        frame.configure(padx=0, pady=0)  # let children fill edge-to-edge
+
+        # ── Top bar ──────────────────────────────────────────────────────────
+        top = tk.Frame(frame, bg=BG2, padx=12, pady=8)
+        top.pack(fill="x")
+
+        tk.Label(top, text="Transcription History", bg=BG2, fg=TEXT,
+                 font=FONT_HEAD).pack(side="left")
+
+        clear_btn = tk.Button(
+            top, text="Clear All", bg=ERROR, fg="white", relief="flat", bd=0,
+            font=FONT, cursor="hand2", padx=10, pady=4,
+            activebackground="#dc2626",
+        )
+        clear_btn.pack(side="right", padx=(0, 16))
+
+        search_var = tk.StringVar()
+        search_entry = tk.Entry(
+            top, textvariable=search_var, bg=BG3, fg=TEXT,
+            insertbackground=TEXT, relief="flat", bd=0, font=FONT, width=26,
+            highlightthickness=1, highlightcolor=ACCENT, highlightbackground=BORDER,
+        )
+        search_entry.pack(side="right", padx=(8, 0))
+        tk.Label(top, text="Search:", bg=BG2, fg=TEXT_MUTED, font=FONT).pack(side="right")
+
+        # ── Left/right pane ──────────────────────────────────────────────────
+        pane = tk.PanedWindow(frame, orient="horizontal", bg=BORDER, sashwidth=2,
+                              sashrelief="flat")
+        pane.pack(fill="both", expand=True)
+
+        list_frame = tk.Frame(pane, bg=BG, width=300)
+        pane.add(list_frame, minsize=200)
+
+        listbox = tk.Listbox(
+            list_frame, bg=BG, fg=TEXT, selectbackground=BG3,
+            selectforeground=ACCENT, relief="flat", bd=0, font=FONT_SMALL,
+            activestyle="none", highlightthickness=0,
+        )
+        sb_list = ttk.Scrollbar(list_frame, orient="vertical", command=listbox.yview)
+        listbox.configure(yscrollcommand=sb_list.set)
+        sb_list.pack(side="right", fill="y")
+        listbox.pack(fill="both", expand=True)
+
+        # ── Detail panel ─────────────────────────────────────────────────────
+        detail_frame = tk.Frame(pane, bg=BG)
+        pane.add(detail_frame, minsize=380)
+
+        detail_top = tk.Frame(detail_frame, bg=BG, padx=12, pady=8)
+        detail_top.pack(fill="x")
+
+        meta_label = tk.Label(detail_top, text="", bg=BG, fg=TEXT_MUTED,
+                              font=FONT_SMALL, justify="left", anchor="w")
+        meta_label.pack(side="left", fill="x", expand=True)
+
+        btn_frame = tk.Frame(detail_top, bg=BG)
+        btn_frame.pack(side="right")
+
+        # Raw / Enhanced sub-tabs
+        style = ttk.Style()
+        style.configure("Detail.TNotebook", background=BG, borderwidth=0)
+        style.configure("Detail.TNotebook.Tab", background=BG2, foreground=TEXT_MUTED,
+                        padding=[10, 4], font=FONT_SMALL)
+        style.map("Detail.TNotebook.Tab",
+                  background=[("selected", BG3)],
+                  foreground=[("selected", TEXT)])
+
+        detail_nb = ttk.Notebook(detail_frame, style="Detail.TNotebook")
+        detail_nb.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+
+        raw_frame = tk.Frame(detail_nb, bg=BG3)
+        detail_nb.add(raw_frame, text="Raw Transcription")
+        raw_text = tk.Text(raw_frame, bg=BG3, fg=TEXT, insertbackground=TEXT,
+                           relief="flat", bd=8, font=FONT_SMALL, wrap="word",
+                           state="disabled", highlightthickness=0)
+        raw_sb = ttk.Scrollbar(raw_frame, orient="vertical", command=raw_text.yview)
+        raw_text.configure(yscrollcommand=raw_sb.set)
+        raw_sb.pack(side="right", fill="y")
+        raw_text.pack(fill="both", expand=True)
+
+        enh_frame = tk.Frame(detail_nb, bg=BG3)
+        detail_nb.add(enh_frame, text="Enhanced")
+        enh_text = tk.Text(enh_frame, bg=BG3, fg=TEXT, insertbackground=TEXT,
+                           relief="flat", bd=8, font=FONT_SMALL, wrap="word",
+                           state="disabled", highlightthickness=0)
+        enh_sb = ttk.Scrollbar(enh_frame, orient="vertical", command=enh_text.yview)
+        enh_text.configure(yscrollcommand=enh_sb.set)
+        enh_sb.pack(side="right", fill="y")
+        enh_text.pack(fill="both", expand=True)
+
+        # ── Logic helpers ─────────────────────────────────────────────────────
+
+        def current_record():
+            idx = selected_idx[0]
+            if idx is not None and idx < len(filtered):
+                return filtered[idx]
+            return None
+
+        def rebuild_list():
+            listbox.delete(0, "end")
+            for r in filtered:
+                ts = r.timestamp.strftime("%m/%d %H:%M")
+                preview = r.text[:50].replace("\n", " ")
+                if len(r.text) > 50:
+                    preview += "…"
+                listbox.insert("end", f"  {ts}  {preview}")
+
+        def apply_filter(*_):
+            query = search_var.get().lower().strip()
+            if query:
+                filtered[:] = [
+                    r for r in records
+                    if query in r.text.lower()
+                    or (r.enhanced_text and query in r.enhanced_text.lower())
+                ]
+            else:
+                filtered[:] = list(records)
+            rebuild_list()
+
+        def reload():
+            records[:] = transcription_store.get_all(limit=500)
+            selected_idx[0] = None
+            apply_filter()
+
+        # Store reload so tab-change event can call it
+        self._history_reload = reload
+
+        def show_detail(record):
+            ts = record.timestamp.strftime("%A, %B %d %Y at %H:%M:%S")
+            duration = f"{record.duration:.1f}s"
+            model = record.transcription_model or "unknown"
+            meta = f"{ts}  |  Duration: {duration}  |  Model: {model}"
+            if record.ai_model:
+                meta += f"  |  AI: {record.ai_model}"
+            meta_label.configure(text=meta)
+
+            raw_text.configure(state="normal")
+            raw_text.delete("1.0", "end")
+            raw_text.insert("1.0", record.text)
+            raw_text.configure(state="disabled")
+
+            enh_text.configure(state="normal")
+            enh_text.delete("1.0", "end")
+            enh_text.insert("1.0", record.enhanced_text or "(No AI enhancement for this entry)")
+            enh_text.configure(state="disabled")
+
+        def on_select(event):
+            sel = listbox.curselection()
+            if not sel:
+                return
+            idx = sel[0]
+            if idx >= len(filtered):
+                return
+            selected_idx[0] = idx
+            show_detail(filtered[idx])
+
+        def copy_raw():
+            r = current_record()
+            if r:
+                self._root.clipboard_clear()
+                self._root.clipboard_append(r.text)
+
+        def copy_enhanced():
+            r = current_record()
+            if r:
+                self._root.clipboard_clear()
+                self._root.clipboard_append(r.enhanced_text or r.text)
+
+        def delete_selected():
+            r = current_record()
+            if not r:
+                return
+            if _mb.askyesno("Delete", "Delete this transcription?", parent=self._window):
+                transcription_store.delete(r.id)
+                selected_idx[0] = None
+                meta_label.configure(text="")
+                raw_text.configure(state="normal")
+                raw_text.delete("1.0", "end")
+                raw_text.configure(state="disabled")
+                enh_text.configure(state="normal")
+                enh_text.delete("1.0", "end")
+                enh_text.configure(state="disabled")
+                reload()
+
+        def clear_all():
+            if _mb.askyesno("Clear All",
+                            "Delete ALL transcription history? This cannot be undone.",
+                            parent=self._window):
+                transcription_store.delete_all()
+                reload()
+
+        # ── Wire up events ────────────────────────────────────────────────────
+        listbox.bind("<<ListboxSelect>>", on_select)
+        search_var.trace_add("write", apply_filter)
+        clear_btn.configure(command=clear_all)
+
+        tk.Button(btn_frame, text="Copy Raw", bg=BG3, fg=TEXT, relief="flat", bd=0,
+                  font=FONT_SMALL, cursor="hand2", padx=8, pady=4,
+                  command=copy_raw,
+                  activebackground=BG2).pack(side="left", padx=2)
+        tk.Button(btn_frame, text="Copy Enhanced", bg=ACCENT, fg="white",
+                  relief="flat", bd=0, font=FONT_SMALL, cursor="hand2", padx=8, pady=4,
+                  command=copy_enhanced,
+                  activebackground="#4f46e5").pack(side="left", padx=2)
+        tk.Button(btn_frame, text="Delete", bg=BG3, fg=ERROR, relief="flat", bd=0,
+                  font=FONT_SMALL, cursor="hand2", padx=8, pady=4,
+                  command=delete_selected,
+                  activebackground=BG2).pack(side="left", padx=2)
+
+        reload()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

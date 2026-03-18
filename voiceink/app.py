@@ -23,7 +23,6 @@ from voiceink.services.hotkey_manager import HotkeyManager
 from voiceink.services.clipboard import ClipboardPaster
 from voiceink.ui.recorder_overlay import RecorderOverlay
 from voiceink.ui.settings_window import SettingsWindow
-from voiceink.ui.history_window import HistoryWindow
 
 try:
     import pystray
@@ -33,23 +32,32 @@ except ImportError:
     TRAY_AVAILABLE = False
 
 
-# ── Tray icon image (generated programmatically, no asset file needed) ──────
+# ── Tray icon image ──────────────────────────────────────────────────────────
+
+def _assets_dir() -> Path:
+    """Return the assets directory, works both in-source and PyInstaller bundle."""
+    if getattr(sys, 'frozen', False):
+        return Path(sys._MEIPASS) / 'assets'
+    return Path(__file__).parent.parent / 'assets'
+
 
 def _make_tray_icon(recording: bool = False) -> "Image.Image":
+    # Always use favicon.ico regardless of recording state
+    icon_path = _assets_dir() / 'favicon.ico'
+    if icon_path.exists():
+        return Image.open(icon_path).convert('RGBA')
+
+    # Fallback: generated icon if asset is missing
     size = 64
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    colour = "#ef4444" if recording else "#6366f1"
-    # Circle background
-    draw.ellipse([4, 4, size - 4, size - 4], fill=colour)
-    # Microphone body
+    draw.ellipse([4, 4, size - 4, size - 4], fill="#6366f1")
     cx, cy = size // 2, size // 2
     mic_w, mic_h = 12, 18
     draw.rounded_rectangle(
         [cx - mic_w // 2, cy - mic_h // 2, cx + mic_w // 2, cy + mic_h // 2],
         radius=6, fill="white",
     )
-    # Stand
     stand_y = cy + mic_h // 2
     draw.arc([cx - 14, stand_y - 10, cx + 14, stand_y + 10], 0, 180, fill="white", width=3)
     draw.line([cx, stand_y + 10, cx, stand_y + 16], fill="white", width=3)
@@ -75,7 +83,6 @@ class VoiceInkApp:
             self._root, settings,
             on_hotkey_change=self._on_hotkey_settings_changed,
         )
-        self._history_win = HistoryWindow(self._root)
 
         # Tray
         self._tray: Optional[pystray.Icon] = None
@@ -163,12 +170,14 @@ class VoiceInkApp:
                              lambda: self._engine.toggle()),
             pystray.MenuItem("Show Overlay",
                              lambda: self._root.after(0, self._overlay.show)),
-            pystray.MenuItem("History",
-                             lambda: self._root.after(0, self._history_win.show)),
             pystray.MenuItem("Settings",
                              lambda: self._root.after(0, self._settings_win.show)),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self._quit),
+            # Hidden default item — triggered on double-click (Windows)
+            pystray.MenuItem("Toggle Recording",
+                             lambda: self._engine.toggle(),
+                             default=True, visible=False),
         )
 
         self._tray = pystray.Icon(
