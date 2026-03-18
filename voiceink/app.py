@@ -42,8 +42,8 @@ def _assets_dir() -> Path:
 
 
 def _make_tray_icon(recording: bool = False) -> "Image.Image":
-    # Always use favicon.ico regardless of recording state
-    icon_path = _assets_dir() / 'favicon.ico'
+    # Always use icon.ico regardless of recording state
+    icon_path = _assets_dir() / 'icon.ico'
     if icon_path.exists():
         return Image.open(icon_path).convert('RGBA')
 
