@@ -6,6 +6,7 @@ Mirrors the macOS VoiceInk layout: left nav + right content panel.
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Callable, Optional
+from pathlib import Path
 import threading
 import uuid
 
@@ -46,7 +47,7 @@ FONT_LOGO    = ("Segoe UI", 11, "bold")
 NAV_ITEMS = [
     ("\u229e", "Dashboard"),
     ("\u2261", "History"),
-    ("\u25ce", "Transcription"),
+    ("\u25ce", "AI Models"),
     ("\u26a1", "AI Enhancement"),
     ("\u266a", "Audio Input"),
     ("\u2328", "Hotkey"),
@@ -72,14 +73,18 @@ class SettingsWindow:
         self._build()
 
     def _build(self):
+        self._active_nav = None
+        self._nav_items = {}
+        self._panels = {}
+
         w = tk.Toplevel(self._root)
         self._window = w
         w.title("VoiceInk Settings")
         w.configure(bg=CONTENT_BG)
         w.resizable(True, True)
         w.attributes("-topmost", False)
-        w.geometry("960x640")
-        w.minsize(800, 540)
+        w.geometry("1100x680")
+        w.minsize(900, 560)
         try:
             import os
             ico = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "icon.ico")
@@ -108,7 +113,7 @@ class SettingsWindow:
 
         self._panels["Dashboard"]      = self._build_dashboard_panel(self._content_area)
         self._panels["History"]        = self._build_history_panel(self._content_area)
-        self._panels["Transcription"]  = self._build_transcription_panel(self._content_area)
+        self._panels["AI Models"]      = self._build_ai_models_panel(self._content_area)
         self._panels["AI Enhancement"] = self._build_ai_panel(self._content_area)
         self._panels["Audio Input"]    = self._build_audio_panel(self._content_area)
         self._panels["Hotkey"]         = self._build_hotkey_panel(self._content_area)
@@ -219,6 +224,17 @@ class SettingsWindow:
             self._panels[name].pack(fill="both", expand=True)
             if name == "History" and hasattr(self, "_history_reload"):
                 self._history_reload()
+
+    # ── Utility helpers ───────────────────────────────────────────────────────
+
+    def _recolor_tree(self, widget, bg):
+        """Recursively set bg on a widget and all its children."""
+        try:
+            widget.configure(bg=bg)
+        except Exception:
+            pass
+        for child in widget.winfo_children():
+            self._recolor_tree(child, bg)
 
     # ── Layout helpers ────────────────────────────────────────────────────────
 
@@ -370,29 +386,6 @@ class SettingsWindow:
         stat_card(1, 0, "\u26a1", "Words Per Minute",     f"{wpm}",           "VoiceInk vs. typing by hand")
         stat_card(1, 1, "\u2328", "Keystrokes Saved",     f"{words * 5:,}",   "fewer keystrokes")
 
-        # Help & Resources
-        self._section_label(inner, "Help & Resources")
-        links = [
-            ("\u229e", "Documentation",      "Read the VoiceInk docs and guides"),
-            ("\u25ce", "Feedback or Issues?", "Report a bug or request a feature"),
-        ]
-        for icon, title, desc in links:
-            row_wrap = tk.Frame(inner, bg=CONTENT_BG, padx=24)
-            row_wrap.pack(fill="x", pady=3)
-            card = tk.Frame(row_wrap, bg=CARD_BG, highlightthickness=1,
-                            highlightbackground=CARD_BORDER, cursor="hand2")
-            card.pack(fill="x")
-            body = tk.Frame(card, bg=CARD_BG, padx=14, pady=12)
-            body.pack(fill="x")
-            left = tk.Frame(body, bg=CARD_BG)
-            left.pack(side="left", fill="x", expand=True)
-            tk.Label(left, text=f"{icon}  {title}", bg=CARD_BG, fg=HEADING,
-                     font=FONT_BOLD).pack(anchor="w")
-            tk.Label(left, text=desc, bg=CARD_BG, fg=TEXT_MUTED,
-                     font=FONT_SMALL).pack(anchor="w")
-            tk.Label(body, text="\u2197", bg=CARD_BG, fg=TEXT_MUTED,
-                     font=("Segoe UI", 12)).pack(side="right")
-
         tk.Frame(inner, bg=CONTENT_BG, height=24).pack()
         return panel
 
@@ -433,20 +426,35 @@ class SettingsWindow:
                               sashwidth=1, sashrelief="flat")
         pane.pack(fill="both", expand=True)
 
-        list_outer = tk.Frame(pane, bg=CONTENT_BG, width=280)
-        pane.add(list_outer, minsize=200)
+        list_outer = tk.Frame(pane, bg=CONTENT_BG, width=300)
+        pane.add(list_outer, minsize=220)
 
-        listbox = tk.Listbox(list_outer, bg=CONTENT_BG, fg=TEXT,
-                             selectbackground=ACCENT_LIGHT,
-                             selectforeground=ACCENT,
-                             relief="flat", bd=0, font=FONT_SMALL,
-                             activestyle="none", highlightthickness=0)
+        list_canvas = tk.Canvas(list_outer, bg=CONTENT_BG, highlightthickness=0, bd=0)
         list_sb = ttk.Scrollbar(list_outer, orient="vertical",
-                                command=listbox.yview,
+                                command=list_canvas.yview,
                                 style="Light.Vertical.TScrollbar")
-        listbox.configure(yscrollcommand=list_sb.set)
+        list_canvas.configure(yscrollcommand=list_sb.set)
         list_sb.pack(side="right", fill="y")
-        listbox.pack(fill="both", expand=True)
+        list_canvas.pack(side="left", fill="both", expand=True)
+
+        cards_frame = tk.Frame(list_canvas, bg=CONTENT_BG)
+        cards_window = list_canvas.create_window((0, 0), window=cards_frame, anchor="nw")
+
+        def _on_cards_configure(e):
+            list_canvas.configure(scrollregion=list_canvas.bbox("all"))
+
+        def _on_canvas_resize(e):
+            list_canvas.itemconfig(cards_window, width=e.width)
+
+        cards_frame.bind("<Configure>", _on_cards_configure)
+        list_canvas.bind("<Configure>", _on_canvas_resize)
+
+        def _bind_mousewheel(widget):
+            widget.bind("<MouseWheel>", lambda e: list_canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+            for child in widget.winfo_children():
+                _bind_mousewheel(child)
+
+        card_widgets: list = []  # list of (outer, cf, lbl_ts, lbl_pre) per card
 
         detail_outer = tk.Frame(pane, bg=CONTENT_BG)
         pane.add(detail_outer, minsize=380)
@@ -486,12 +494,60 @@ class SettingsWindow:
             i = selected_idx[0]
             return filtered[i] if i is not None and i < len(filtered) else None
 
+        def _select_card(idx):
+            for i, (outer_w, cf, lbl_ts, lbl_pre) in enumerate(card_widgets):
+                bg = ACCENT_LIGHT if i == idx else CARD_BG
+                border = ACCENT if i == idx else CARD_BORDER
+                cf.configure(highlightbackground=border)
+                self._recolor_tree(cf, bg)
+            selected_idx[0] = idx
+            if idx is not None and idx < len(filtered):
+                show_detail(filtered[idx])
+
         def rebuild_list():
-            listbox.delete(0, "end")
-            for r in filtered:
-                ts = r.timestamp.strftime("%m/%d %H:%M")
-                preview = r.text[:50].replace("\n", " ")
-                listbox.insert("end", f"  {ts}  {preview}{'…' if len(r.text) > 50 else ''}")
+            for outer_w, *_ in card_widgets:
+                outer_w.destroy()
+            card_widgets.clear()
+
+            for idx, r in enumerate(filtered):
+                ts = r.timestamp.strftime("%d %b  ·  %H:%M")
+                dur = f"{r.duration:.0f}s"
+                preview = r.text[:80].replace("\n", " ")
+                if len(r.text) > 80:
+                    preview += "…"
+
+                outer = tk.Frame(cards_frame, bg=CONTENT_BG, padx=10, pady=4)
+                outer.pack(fill="x")
+
+                cf = tk.Frame(outer, bg=CARD_BG,
+                              highlightthickness=1, highlightbackground=CARD_BORDER,
+                              cursor="hand2")
+                cf.pack(fill="x")
+
+                inner_pad = tk.Frame(cf, bg=CARD_BG, padx=12, pady=10)
+                inner_pad.pack(fill="x")
+
+                top_row = tk.Frame(inner_pad, bg=CARD_BG)
+                top_row.pack(fill="x")
+
+                lbl_ts = tk.Label(top_row, text=ts, bg=CARD_BG, fg=TEXT_MUTED, font=FONT_SMALL)
+                lbl_ts.pack(side="left")
+                tk.Label(top_row, text=dur, bg=CARD_BG, fg=TEXT_MUTED, font=FONT_SMALL).pack(side="right")
+
+                lbl_pre = tk.Label(inner_pad, text=preview, bg=CARD_BG, fg=TEXT,
+                                   font=FONT_SMALL, wraplength=220, justify="left", anchor="w")
+                lbl_pre.pack(fill="x", pady=(4, 0))
+
+                i = idx  # capture
+                for widget in (cf, outer, inner_pad, top_row, lbl_ts, lbl_pre):
+                    widget.bind("<Button-1>", lambda e, n=i: _select_card(n))
+
+                for child in top_row.winfo_children():
+                    child.bind("<Button-1>", lambda e, n=i: _select_card(n))
+
+                card_widgets.append((outer, cf, lbl_ts, lbl_pre))
+
+            _bind_mousewheel(cards_frame)
 
         def apply_filter(*_):
             q = search_var.get().lower().strip()
@@ -522,11 +578,6 @@ class SettingsWindow:
                 tw.insert("1.0", txt)
                 tw.configure(state="disabled")
 
-        def on_select(_):
-            sel = listbox.curselection()
-            if sel and sel[0] < len(filtered):
-                selected_idx[0] = sel[0]
-                show_detail(filtered[sel[0]])
 
         def copy_raw():
             r = current_record()
@@ -560,7 +611,6 @@ class SettingsWindow:
                 transcription_store.delete_all()
                 reload()
 
-        listbox.bind("<<ListboxSelect>>", on_select)
         search_var.trace_add("write", apply_filter)
         clear_btn.configure(command=clear_all)
 
@@ -582,63 +632,402 @@ class SettingsWindow:
 
     # ── Transcription ─────────────────────────────────────────────────────────
 
-    def _build_transcription_panel(self, parent):
+    def _build_ai_models_panel(self, parent):
         panel = tk.Frame(parent, bg=CONTENT_BG)
-        self._panel_header(panel, "Transcription", "Speech-to-text settings")
 
-        scroll_wrap = tk.Frame(panel, bg=CONTENT_BG)
-        scroll_wrap.pack(fill="both", expand=True)
-        inner = self._make_scrollable(scroll_wrap)
+        # ── Custom header with live "current selection" badge ─────────────────
+        hdr = tk.Frame(panel, bg=CONTENT_BG, padx=24, pady=18)
+        hdr.pack(fill="x")
+        left_hdr = tk.Frame(hdr, bg=CONTENT_BG)
+        left_hdr.pack(side="left", fill="x", expand=True)
+        tk.Label(left_hdr, text="AI Models", bg=CONTENT_BG, fg=HEADING,
+                 font=FONT_HEAD).pack(anchor="w")
+        tk.Label(left_hdr, text="Transcription & speech-to-text settings",
+                 bg=CONTENT_BG, fg=TEXT_MUTED, font=FONT_SMALL).pack(anchor="w", pady=(2, 0))
 
-        self._section_label(inner, "Provider")
-        c = self._card(inner)
-        tk.Label(c, text="Transcription Provider", bg=CARD_BG, fg=TEXT,
-                 font=FONT_BOLD).pack(anchor="w", pady=(0, 4))
-        prov_var = tk.StringVar(
-            value=self._settings.get_str("transcription_provider") or "local")
-        self._combobox(c, prov_var,
-                       ["local", "groq", "openai", "deepgram", "custom"],
-                       width=20).pack(anchor="w")
-        prov_var.trace_add("write", lambda *_: self._settings.set(
-            "transcription_provider", prov_var.get()))
+        # Badge showing current active provider/model
+        badge_frame = tk.Frame(hdr, bg=ACCENT_LIGHT, padx=10, pady=5)
+        badge_frame.pack(side="right", anchor="center")
+        badge_lbl = tk.Label(badge_frame, text="", bg=ACCENT_LIGHT, fg=ACCENT,
+                             font=FONT_BOLD)
+        badge_lbl.pack()
 
-        self._section_label(inner, "Local Model")
-        c2 = self._card(inner)
-        tk.Label(c2, text="Model (faster-whisper)", bg=CARD_BG, fg=TEXT,
-                 font=FONT_BOLD).pack(anchor="w", pady=(0, 4))
+        # Initialise cur_key_var before _update_badge so the initial call is correct
+        _init_prov = self._settings.get_str("transcription_provider") or "local"
+        cur_key_var = [
+            self._settings.get_str("local_model_name") or "base"
+            if _init_prov == "local" else None
+        ]
+
+        def _update_badge():
+            prov = self._settings.get_str("transcription_provider") or "local"
+            if prov == "local":
+                model_name = cur_key_var[0] or self._settings.get_str("local_model_name")
+                if model_name:
+                    badge_lbl.configure(text=f"Local  ·  {model_name}")
+                else:
+                    badge_lbl.configure(text="Local  ·  no model selected")
+            else:
+                labels = {"groq": "Groq", "openai": "OpenAI",
+                          "deepgram": "Deepgram", "custom": "Custom"}
+                badge_lbl.configure(text=f"Provider  ·  {labels.get(prov, prov.title())}")
+
+        _update_badge()
+        tk.Frame(panel, bg=BORDER, height=1).pack(fill="x")
+
+        # ── Sub-tab bar ───────────────────────────────────────────────────────
+        TAB_NAMES = ["Local Model", "Provider"]
+        active_tab: list = ["Local Model"]
+
+        tab_bar = tk.Frame(panel, bg=CONTENT_BG, padx=24)
+        tab_bar.pack(fill="x")
+        tk.Frame(panel, bg=BORDER, height=1).pack(fill="x")
+
+        tab_content = tk.Frame(panel, bg=CONTENT_BG)
+        tab_content.pack(fill="both", expand=True)
+
+        tab_frames: dict = {}
+
+        def switch_tab(name):
+            active_tab[0] = name
+            for n, btn in tab_btns.items():
+                if n == name:
+                    btn.configure(fg=ACCENT, font=("Segoe UI", 10, "bold"))
+                    tab_underlines[n].configure(bg=ACCENT)
+                else:
+                    btn.configure(fg=TEXT_MUTED, font=FONT)
+                    tab_underlines[n].configure(bg=CONTENT_BG)
+            for n, f in tab_frames.items():
+                if n == name:
+                    f.place(relx=0, rely=0, relwidth=1, relheight=1)
+                else:
+                    f.place_forget()
+
+        tab_btns = {}
+        tab_underlines = {}
+        for name in TAB_NAMES:
+            col = tk.Frame(tab_bar, bg=CONTENT_BG)
+            col.pack(side="left")
+            btn = tk.Button(col, text=name, bg=CONTENT_BG, fg=TEXT_MUTED,
+                            relief="flat", bd=0, font=FONT, cursor="hand2",
+                            padx=4, pady=10, activebackground=CONTENT_BG,
+                            command=lambda n=name: switch_tab(n))
+            btn.pack()
+            ul = tk.Frame(col, bg=CONTENT_BG, height=2)
+            ul.pack(fill="x")
+            tab_btns[name] = btn
+            tab_underlines[name] = ul
+            tk.Frame(tab_bar, bg=CONTENT_BG, width=16).pack(side="left")
+
+        # ── Local Model tab ───────────────────────────────────────────────────
+        local_frame = tk.Frame(tab_content, bg=CONTENT_BG)
+        tab_frames["Local Model"] = local_frame
+
+        lm_scroll_wrap = tk.Frame(local_frame, bg=CONTENT_BG)
+        lm_scroll_wrap.pack(fill="both", expand=True)
+        lm_inner = self._make_scrollable(lm_scroll_wrap)
+
+        self._section_label(lm_inner, "Whisper Models (runs locally, no internet required)")
+
         display_map = {v["display"]: k for k, v in LOCAL_MODELS.items()}
-        cur_key  = self._settings.get_str("local_model_name") or "base"
-        cur_disp = LOCAL_MODELS.get(cur_key, {}).get("display", cur_key)
-        model_var = tk.StringVar(value=cur_disp)
-        self._combobox(c2, model_var,
-                       [v["display"] for v in LOCAL_MODELS.values()],
-                       width=24).pack(anchor="w")
-        model_var.trace_add("write", lambda *_: self._settings.set(
-            "local_model_name", display_map.get(model_var.get(), "base")))
 
-        dl_status = tk.Label(c2, text="", bg=CARD_BG, fg=TEXT_MUTED, font=FONT_SMALL)
-        dl_status.pack(anchor="w", pady=(6, 0))
+        MODEL_DESCS = {
+            "tiny":     "Fastest, lowest accuracy. Best for quick drafts.",
+            "base":     "Good balance of speed and accuracy. Recommended for most users.",
+            "small":    "Better accuracy, moderate speed. Great for clear speech.",
+            "medium":   "High accuracy, slower. Ideal for complex vocabulary.",
+            "large-v3": "Best accuracy available. Slowest, requires more RAM.",
+        }
+        SPEED_BARS  = {k: int(v["speed"] / 5 * 5) for k, v in LOCAL_MODELS.items()}
+        ACC_BARS    = {k: int(v["accuracy"] * 5) for k, v in LOCAL_MODELS.items()}
 
-        def download_model():
-            key = display_map.get(model_var.get(), "base")
-            if (MODELS_DIR / key).exists():
-                dl_status.configure(text=f"\u2713 '{key}' already downloaded.", fg=SUCCESS)
-                return
-            dl_status.configure(text=f"Downloading '{key}'...", fg=TEXT_MUTED)
+        model_card_frames: dict = {}
+        model_action_btns: dict = {}   # key -> action Button widget
+        model_delete_btns: dict = {}   # key -> delete icon Button widget
+        model_bg_widgets: dict = {}    # key -> list of (widget, is_text) to recolor
+        _downloading: set = set()      # keys currently being downloaded
+        # Snapshot of download state — checked from disk once on open, then
+        # updated only on explicit download/delete. Never re-checked mid-session
+        # to avoid filesystem noise flipping card states unexpectedly.
+        _downloaded: set = set()       # keys confirmed downloaded on disk
+
+        def _hf_snapshot_dir(key):
+            """Return the HuggingFace model cache root dir for a model, or None."""
+            folder = f"models--Systran--faster-whisper-{key}"
+            import os as _os
+            candidates = []
+            hf_hub_cache = _os.environ.get("HUGGINGFACE_HUB_CACHE")
+            hf_home = _os.environ.get("HF_HOME")
+            if hf_hub_cache:
+                candidates.append(Path(hf_hub_cache) / folder)
+            elif hf_home:
+                candidates.append(Path(hf_home) / "hub" / folder)
+            candidates.append(Path.home() / ".cache" / "huggingface" / "hub" / folder)
+            for cache_dir in candidates:
+                snapshots = cache_dir / "snapshots"
+                if not snapshots.exists():
+                    continue
+                for snap in snapshots.iterdir():
+                    if (snap / "model.bin").exists():
+                        return cache_dir  # return the whole model cache root
+            return None
+
+        def check_downloaded(key):
+            # Check manual MODELS_DIR first
+            if (MODELS_DIR / key).exists() and (MODELS_DIR / key / "model.bin").exists():
+                return True
+            # Then check HuggingFace disk cache directly (no huggingface_hub needed)
+            return _hf_snapshot_dir(key) is not None
+
+        # Populate _downloaded once from disk at panel build time
+        for _k in LOCAL_MODELS:
+            if check_downloaded(_k):
+                _downloaded.add(_k)
+
+        def _refresh_all_cards():
+            """Update every card's bg and button state. Does NOT touch bar dot frames."""
+            current = cur_key_var[0]  # None when a cloud provider is active
+            for k in model_card_frames:
+                is_cur = (current is not None and k == current)
+                in_progress = k in _downloading
+                bg     = ACCENT_LIGHT if is_cur else CARD_BG
+                border = ACCENT       if is_cur else CARD_BORDER
+                model_card_frames[k].configure(highlightbackground=border)
+                for widget in model_bg_widgets.get(k, []):
+                    try:
+                        widget.configure(bg=bg)
+                    except Exception:
+                        pass
+                btn = model_action_btns[k]
+                if in_progress:
+                    # Leave the "Downloading…" button state untouched
+                    if k in model_delete_btns:
+                        model_delete_btns[k].pack_forget()
+                    continue
+                # For the default card trust cur_key_var — skip disk check
+                if is_cur:
+                    btn.configure(text="Default", bg=SUCCESS, fg="white",
+                                  activebackground=SUCCESS, activeforeground="white",
+                                  cursor="arrow", state="disabled")
+                    if k in model_delete_btns:
+                        model_delete_btns[k].pack(side="left", padx=(6, 0))
+                    continue
+                # For all other cards use the stable _downloaded set (no disk re-check)
+                dl = k in _downloaded
+                if dl:
+                    btn.configure(text="Set as Default", bg=ACCENT, fg="white",
+                                  activebackground="#4F46E5", activeforeground="white",
+                                  cursor="hand2", state="normal")
+                else:
+                    btn.configure(text="Download", bg=ACCENT, fg="white",
+                                  activebackground="#4F46E5", activeforeground="white",
+                                  cursor="hand2", state="normal")
+                if k in model_delete_btns:
+                    if dl:
+                        model_delete_btns[k].pack(side="left", padx=(6, 0))
+                    else:
+                        model_delete_btns[k].pack_forget()
+
+        def set_default(key):
+            cur_key_var[0] = key
+            self._settings.set("local_model_name", key)
+            self._settings.set("transcription_provider", "local")
+            _refresh_all_cards()
+            _update_badge()
+
+        def download_and_set(key):
+            if key in _downloading:
+                return  # already in progress, ignore duplicate clicks
+            _downloading.add(key)
+            btn = model_action_btns[key]
+            btn.configure(text="Downloading…", state="disabled", fg="white",
+                          bg=TEXT_MUTED, activebackground=TEXT_MUTED,
+                          activeforeground="white")
             def _do():
                 try:
                     from faster_whisper import WhisperModel
                     WhisperModel(key, device="cpu", compute_type="int8")
-                    dl_status.configure(text=f"\u2713 '{key}' downloaded.", fg=SUCCESS)
-                except Exception as e:
-                    dl_status.configure(text=f"\u2715 Failed: {e}", fg=ERROR)
+                    def _done():
+                        _downloading.discard(key)
+                        _downloaded.add(key)
+                        _refresh_all_cards()
+                    btn.after(0, _done)
+                except Exception:
+                    def _on_err():
+                        _downloading.discard(key)
+                        btn.configure(text="Retry", bg=ERROR, fg="white",
+                                      activebackground=ERROR, activeforeground="white",
+                                      cursor="hand2", state="normal",
+                                      command=lambda k=key: download_and_set(k))
+                    btn.after(0, _on_err)
             threading.Thread(target=_do, daemon=True).start()
 
-        self._btn(c2, "Download Selected Model", download_model,
-                  accent=True).pack(anchor="w", pady=(8, 0))
+        def on_action_btn(key):
+            if key in _downloading:
+                return  # download in progress, ignore
+            if key in _downloaded:
+                set_default(key)
+            else:
+                download_and_set(key)
 
-        self._section_label(inner, "Language & Prompt")
-        c3 = self._card(inner)
+        def delete_model(key):
+            if not messagebox.askyesno(
+                "Delete Model",
+                f"Delete the '{LOCAL_MODELS[key]['display']}' model files?\nYou can re-download it later.",
+                parent=self._window
+            ):
+                return
+            import shutil
+            # Unload from memory FIRST so Windows releases file locks before we delete
+            from voiceink.services.transcription import _model_cache
+            if _model_cache._loaded_name == key:
+                _model_cache.unload()
+            deleted = False
+            # Delete from manual MODELS_DIR
+            local_path = MODELS_DIR / key
+            if local_path.exists():
+                shutil.rmtree(str(local_path), ignore_errors=True)
+                deleted = True
+            # Delete from HuggingFace disk cache directly
+            folder = f"models--Systran--faster-whisper-{key}"
+            import os as _os
+            hf_hub_cache = _os.environ.get("HUGGINGFACE_HUB_CACHE")
+            hf_home2 = _os.environ.get("HF_HOME")
+            hf_candidates = []
+            if hf_hub_cache:
+                hf_candidates.append(Path(hf_hub_cache) / folder)
+            elif hf_home2:
+                hf_candidates.append(Path(hf_home2) / "hub" / folder)
+            hf_candidates.append(Path.home() / ".cache" / "huggingface" / "hub" / folder)
+            for cache_dir in hf_candidates:
+                if cache_dir.exists():
+                    shutil.rmtree(str(cache_dir), ignore_errors=True)
+                    deleted = True
+                    break
+            if deleted:
+                _downloaded.discard(key)
+                # Find another downloaded model to fall back to (if any)
+                fallback = next(
+                    (k for k in LOCAL_MODELS if k != key and k in _downloaded),
+                    None
+                )
+                if cur_key_var[0] == key:
+                    cur_key_var[0] = fallback
+                    if fallback:
+                        self._settings.set("local_model_name", fallback)
+                    else:
+                        # No local models left — clear local selection
+                        self._settings.set("local_model_name", "")
+                _refresh_all_cards()
+                _update_badge()
+                messagebox.showinfo(
+                    "Model Deleted",
+                    f"'{LOCAL_MODELS[key]['display']}' has been deleted."
+                    + ("" if fallback or cur_key_var[0] else
+                       "\n\nNo local models remain. Download one or configure a Provider."),
+                    parent=self._window
+                )
+            else:
+                messagebox.showinfo("Delete Model", "No model files found to delete.", parent=self._window)
+
+        stack_wrap = tk.Frame(lm_inner, bg=CONTENT_BG, padx=24)
+        stack_wrap.pack(fill="x", pady=(0, 8))
+
+        for key, meta in LOCAL_MODELS.items():
+            is_selected = (key == cur_key_var[0])
+            is_dl = key in _downloaded
+            bg     = ACCENT_LIGHT if is_selected else CARD_BG
+            border = ACCENT       if is_selected else CARD_BORDER
+
+            cf = tk.Frame(stack_wrap, bg=bg, highlightthickness=1,
+                          highlightbackground=border)
+            cf.pack(fill="x", pady=4)
+            model_card_frames[key] = cf
+
+            inner_p = tk.Frame(cf, bg=bg, padx=14, pady=10)
+            inner_p.pack(fill="x")
+
+            # Left: info  |  Right: button
+            left = tk.Frame(inner_p, bg=bg)
+            left.pack(side="left", fill="x", expand=True)
+
+            right = tk.Frame(inner_p, bg=bg)
+            right.pack(side="right", padx=(8, 0))
+
+            # Title
+            title_row = tk.Frame(left, bg=bg)
+            title_row.pack(fill="x")
+            title_lbl = tk.Label(title_row, text=meta["display"], bg=bg, fg=HEADING,
+                                 font=FONT_BOLD)
+            title_lbl.pack(side="left")
+
+            # Description
+            desc_lbl = tk.Label(left, text=MODEL_DESCS.get(key, ""), bg=bg, fg=TEXT_MUTED,
+                                font=FONT_SMALL, justify="left", anchor="w")
+            desc_lbl.pack(anchor="w", pady=(2, 4))
+
+            # Speed / Accuracy bars — bar dot frames are NOT added to bg_widgets
+            bars_row = tk.Frame(left, bg=bg)
+            bars_row.pack(anchor="w")
+            bar_spacers = []
+            bar_labels = []
+            for bar_label, filled in [("Speed", SPEED_BARS[key]), ("Accuracy", ACC_BARS[key])]:
+                lbl = tk.Label(bars_row, text=bar_label, bg=bg, fg=TEXT_MUTED,
+                               font=FONT_SMALL, width=8, anchor="w")
+                lbl.pack(side="left")
+                bar_labels.append(lbl)
+                for i in range(5):
+                    # bar dots: fixed colors, intentionally excluded from bg_widgets
+                    tk.Frame(bars_row, bg=ACCENT if i < filled else CARD_BORDER,
+                             width=8, height=5).pack(side="left", padx=1)
+                spacer = tk.Frame(bars_row, bg=bg, width=14)
+                spacer.pack(side="left")
+                bar_spacers.append(spacer)
+
+            # Register all background-sensitive widgets (excludes bar dots)
+            model_bg_widgets[key] = [
+                cf, inner_p, left, right, title_row, title_lbl,
+                desc_lbl, bars_row,
+                *bar_labels, *bar_spacers,
+            ]
+
+            # Action button
+            if is_selected:
+                btn_text, btn_state, btn_cursor, btn_bg = "Default", "disabled", "arrow", SUCCESS
+            elif is_dl:
+                btn_text, btn_state, btn_cursor, btn_bg = "Set as Default", "normal", "hand2", ACCENT
+            else:
+                btn_text, btn_state, btn_cursor, btn_bg = "Download", "normal", "hand2", ACCENT
+
+            # Horizontal row for action + delete buttons
+            btn_wrap = tk.Frame(right, bg=bg)
+            btn_wrap.pack(anchor="center")
+
+            action_btn = tk.Button(btn_wrap, text=btn_text, bg=btn_bg, fg="white",
+                                   relief="flat", bd=0, font=FONT_SMALL,
+                                   cursor=btn_cursor, padx=10, pady=5,
+                                   state=btn_state, activebackground="#4F46E5",
+                                   activeforeground="white",
+                                   command=lambda k=key: on_action_btn(k))
+            action_btn.pack(side="left")
+            model_action_btns[key] = action_btn
+
+            # Delete button (icon, only shown when downloaded)
+            del_btn = tk.Button(btn_wrap, text="\U0001f5d1", bg=ERROR, fg="white",
+                                relief="flat", bd=0, font=("Segoe UI", 9),
+                                cursor="hand2", padx=6, pady=5,
+                                activebackground="#DC2626", activeforeground="white",
+                                command=lambda k=key: delete_model(k))
+            model_delete_btns[key] = del_btn
+            if is_dl:
+                del_btn.pack(side="left", padx=(6, 0))
+
+            # Store btn_wrap so _refresh_all_cards can recolor it
+            model_bg_widgets[key].append(btn_wrap)
+
+        # Language & Prompt section
+        self._section_label(lm_inner, "Language & Prompt")
+        c3 = self._card(lm_inner)
         tk.Label(c3, text="Language", bg=CARD_BG, fg=TEXT,
                  font=FONT_BOLD).pack(anchor="w", pady=(0, 2))
         tk.Label(c3, text="auto = detect automatically", bg=CARD_BG,
@@ -662,7 +1051,202 @@ class SettingsWindow:
         prompt_var.trace_add("write", lambda *_: self._settings.set(
             "transcription_prompt", prompt_var.get()))
 
-        tk.Frame(inner, bg=CONTENT_BG, height=24).pack()
+        tk.Frame(lm_inner, bg=CONTENT_BG, height=24).pack()
+
+        # ── Provider tab ──────────────────────────────────────────────────────
+        prov_frame = tk.Frame(tab_content, bg=CONTENT_BG)
+        tab_frames["Provider"] = prov_frame
+
+        pv_scroll_wrap = tk.Frame(prov_frame, bg=CONTENT_BG)
+        pv_scroll_wrap.pack(fill="both", expand=True)
+        pv_inner = self._make_scrollable(pv_scroll_wrap)
+
+        TRANSCRIPTION_PROVIDERS = {
+            "groq":     {"label": "Groq",                    "needs_key": True,  "needs_url": False, "model_fixed": "whisper-large-v3"},
+            "openai":   {"label": "OpenAI",                  "needs_key": True,  "needs_url": False, "model_fixed": "whisper-1"},
+            "deepgram": {"label": "Deepgram",                "needs_key": True,  "needs_url": False, "model_fixed": "nova-2"},
+            "custom":   {"label": "Custom (OpenAI-compatible endpoint)", "needs_key": True, "needs_url": True, "model_fixed": None},
+        }
+
+        PROVIDER_DETAILS = {
+            "groq":     ("Groq provides ultra-fast cloud transcription using Whisper Large v3.\n"
+                         "Get your API key at console.groq.com"),
+            "openai":   ("OpenAI Whisper API. Accurate and reliable cloud transcription.\n"
+                         "Get your API key at platform.openai.com"),
+            "deepgram": ("Deepgram Nova-2 offers real-time cloud transcription with high accuracy.\n"
+                         "Get your API key at console.deepgram.com"),
+            "custom":   ("Connect to any OpenAI-compatible transcription endpoint.\n"
+                         "Provide the base URL, API key, and model name."),
+        }
+
+        PROVIDER_KEYS = {
+            "groq":     "groq_transcription_api_key",
+            "openai":   "openai_transcription_api_key",
+            "deepgram": "deepgram_api_key",
+            "custom":   "custom_transcription_api_key",
+        }
+        # Fall back to a shared key setting if provider-specific not stored yet
+        def _get_prov_key(p):
+            specific = self._settings.get_str(PROVIDER_KEYS.get(p, "")) or ""
+            if not specific and p != "custom":
+                return self._settings.get_str("transcription_api_key") or ""
+            return specific
+
+        self._section_label(pv_inner, "Active Transcription Provider")
+        prov_card = self._card(pv_inner)
+
+        _saved_prov = self._settings.get_str("transcription_provider") or "groq"
+        if _saved_prov not in TRANSCRIPTION_PROVIDERS:
+            _saved_prov = "groq"
+        prov_var = tk.StringVar(value=_saved_prov)
+
+        # Provider picker row
+        picker_row = tk.Frame(prov_card, bg=CARD_BG)
+        picker_row.pack(fill="x", pady=(0, 8))
+        tk.Label(picker_row, text="Provider", bg=CARD_BG, fg=TEXT,
+                 font=FONT_BOLD, width=14, anchor="w").pack(side="left")
+        self._combobox(picker_row, prov_var,
+                       list(TRANSCRIPTION_PROVIDERS.keys()),
+                       width=28).pack(side="left")
+        prov_var.trace_add("write", lambda *_: self._settings.set(
+            "transcription_provider", prov_var.get()))
+
+        # Description label
+        desc_lbl = tk.Label(prov_card, text="", bg=CARD_BG, fg=TEXT_MUTED,
+                            font=FONT_SMALL, wraplength=560, justify="left", anchor="w")
+        desc_lbl.pack(anchor="w", pady=(0, 4))
+
+        # Dynamic fields section
+        self._section_label(pv_inner, "Provider Settings")
+        dyn_card = self._card(pv_inner)
+
+        # API Key row
+        key_row = tk.Frame(dyn_card, bg=CARD_BG)
+        key_lbl_w = tk.Label(key_row, text="API Key", bg=CARD_BG, fg=TEXT,
+                             font=FONT_BOLD, width=14, anchor="w")
+        key_var = tk.StringVar()
+        key_entry = self._entry(key_row, textvariable=key_var, show="\u2022", width=38)
+        key_hint = tk.Label(dyn_card, text="", bg=CARD_BG, fg=TEXT_MUTED, font=FONT_SMALL)
+
+        # Base URL row (custom only)
+        url_row = tk.Frame(dyn_card, bg=CARD_BG)
+        url_lbl_w = tk.Label(url_row, text="Base URL", bg=CARD_BG, fg=TEXT,
+                             font=FONT_BOLD, width=14, anchor="w")
+        url_var = tk.StringVar(
+            value=self._settings.get_str("custom_transcription_base_url") or "")
+        url_entry = self._entry(url_row, textvariable=url_var, width=38)
+        url_var.trace_add("write", lambda *_: self._settings.set(
+            "custom_transcription_base_url", url_var.get()))
+
+        # Model row
+        model_row = tk.Frame(dyn_card, bg=CARD_BG)
+        model_lbl_w = tk.Label(model_row, text="Model", bg=CARD_BG, fg=TEXT,
+                               font=FONT_BOLD, width=14, anchor="w")
+        model_var2 = tk.StringVar(
+            value=self._settings.get_str("custom_transcription_model") or "")
+        model_entry = self._entry(model_row, textvariable=model_var2, width=28)
+        model_hint = tk.Label(dyn_card, text="", bg=CARD_BG, fg=TEXT_MUTED, font=FONT_SMALL)
+        model_var2.trace_add("write", lambda *_: self._settings.set(
+            "custom_transcription_model", model_var2.get()))
+
+        # Action buttons + feedback (defined before refresh_provider so they can be referenced)
+        btn_row = tk.Frame(dyn_card, bg=CARD_BG)
+        save_btn = tk.Button(btn_row, text="Save API Key", bg=ACCENT, fg="white",
+                             relief="flat", bd=0, font=FONT_SMALL, cursor="hand2",
+                             padx=12, pady=6, activebackground="#4F46E5",
+                             activeforeground="white")
+        save_btn.pack(side="left", padx=(0, 8))
+        use_btn = tk.Button(btn_row, text="Use for Transcription", bg=SUCCESS, fg="white",
+                            relief="flat", bd=0, font=FONT_SMALL, cursor="hand2",
+                            padx=12, pady=6, activebackground="#15803D",
+                            activeforeground="white")
+        use_btn.pack(side="left")
+        feedback_lbl = tk.Label(dyn_card, text="", bg=CARD_BG, fg=SUCCESS, font=FONT_SMALL)
+
+        def _flash_feedback(msg, color=SUCCESS):
+            feedback_lbl.configure(text=msg, fg=color)
+            feedback_lbl.after(2500, lambda: feedback_lbl.configure(text=""))
+
+        def save_key_action():
+            p = prov_var.get()
+            setting_key = PROVIDER_KEYS.get(p)
+            if setting_key:
+                self._settings.set(setting_key, key_var.get())
+                self._settings.set("transcription_api_key", key_var.get())
+            _flash_feedback("API key saved.")
+
+        def use_for_transcription():
+            p = prov_var.get()
+            self._settings.set("transcription_provider", p)
+            setting_key = PROVIDER_KEYS.get(p)
+            if setting_key:
+                self._settings.set(setting_key, key_var.get())
+            # Deselect any local model card since a cloud provider is now active
+            cur_key_var[0] = None
+            _refresh_all_cards()
+            _update_badge()
+            labels = {"groq": "Groq", "openai": "OpenAI",
+                      "deepgram": "Deepgram", "custom": "Custom"}
+            _flash_feedback(f"{labels.get(p, p.title())} is now active for transcription.")
+
+        save_btn.configure(command=save_key_action)
+        use_btn.configure(command=use_for_transcription)
+
+        def refresh_provider(*_):
+            p = prov_var.get()
+            cfg = TRANSCRIPTION_PROVIDERS.get(p, {})
+            desc_lbl.configure(text=PROVIDER_DETAILS.get(p, ""))
+
+            # Hide everything first
+            for w in (key_row, key_hint, url_row, url_lbl_w, model_row, model_hint,
+                      btn_row, feedback_lbl):
+                w.pack_forget()
+
+            # API key
+            key_row.pack(fill="x", pady=(4, 2))
+            key_lbl_w.pack(side="left")
+            key_entry.pack(side="left")
+            hints = {
+                "groq":     "Get key at console.groq.com",
+                "openai":   "Get key at platform.openai.com",
+                "deepgram": "Get key at console.deepgram.com",
+                "custom":   "API key for your endpoint",
+            }
+            key_hint.configure(text=hints.get(p, ""))
+            key_hint.pack(anchor="w", pady=(0, 6))
+
+            # Load saved key for this provider
+            saved_key = _get_prov_key(p)
+            key_var.set(saved_key)
+
+            # Base URL (custom only)
+            if cfg.get("needs_url"):
+                url_row.pack(fill="x", pady=(4, 2))
+                url_lbl_w.pack(side="left")
+                url_entry.pack(side="left")
+
+            # Model
+            model_row.pack(fill="x", pady=(4, 2))
+            model_lbl_w.pack(side="left")
+            fixed = cfg.get("model_fixed")
+            if fixed:
+                model_var2.set(fixed)
+                model_hint.configure(text=f"Fixed model: {fixed}")
+            else:
+                model_entry.pack(side="left")
+                model_hint.configure(text="Enter the model/engine name for your endpoint")
+            model_hint.pack(anchor="w", pady=(0, 8))
+
+            btn_row.pack(fill="x", pady=(4, 2))
+            feedback_lbl.pack(anchor="w", pady=(4, 0))
+
+        prov_var.trace_add("write", refresh_provider)
+        refresh_provider()
+
+        tk.Frame(pv_inner, bg=CONTENT_BG, height=24).pack()
+
+        # Activate first tab
+        switch_tab("Local Model")
         return panel
 
     # ── AI Enhancement ────────────────────────────────────────────────────────

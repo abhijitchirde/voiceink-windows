@@ -27,6 +27,13 @@ _DEFAULTS: dict[str, Any] = {
     "local_model_name": "base",         # tiny | base | small | medium | large-v3
     "transcription_language": "auto",
     "transcription_prompt": "",
+    "transcription_api_key": "",        # legacy shared key
+    "groq_transcription_api_key": "",
+    "openai_transcription_api_key": "",
+    "deepgram_api_key": "",
+    "custom_transcription_api_key": "",
+    "custom_transcription_base_url": "",
+    "custom_transcription_model": "",
 
     # AI Enhancement
     "ai_enhancement_enabled": False,

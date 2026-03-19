@@ -40,9 +40,13 @@ def _find_hf_cached_model(model_name: str) -> Optional[str]:
     folder_name = "models--" + repo_id.replace("/", "--")
 
     # Possible cache roots
-    hf_home = os.environ.get("HF_HOME") or os.environ.get("HUGGINGFACE_HUB_CACHE")
+    # HF_HOME is the parent of the hub dir; HUGGINGFACE_HUB_CACHE points directly to the hub dir
     candidates = []
-    if hf_home:
+    hf_hub_cache = os.environ.get("HUGGINGFACE_HUB_CACHE")
+    hf_home = os.environ.get("HF_HOME")
+    if hf_hub_cache:
+        candidates.append(Path(hf_hub_cache) / folder_name)
+    elif hf_home:
         candidates.append(Path(hf_home) / "hub" / folder_name)
     candidates.append(Path.home() / ".cache" / "huggingface" / "hub" / folder_name)
 
@@ -218,8 +222,20 @@ class TranscriptionService:
     # Cloud transcription
     # ------------------------------------------------------------------
 
+    def _get_transcription_api_key(self, provider: str) -> str:
+        """Return the API key for the given transcription provider."""
+        key_map = {
+            "groq":     "groq_transcription_api_key",
+            "openai":   "openai_transcription_api_key",
+            "deepgram": "deepgram_api_key",
+            "custom":   "custom_transcription_api_key",
+        }
+        specific = self._settings.get_str(key_map.get(provider, "")) or ""
+        # Fall back to legacy shared key if provider-specific key not set
+        return specific or self._settings.get_str("transcription_api_key") or self._settings.get_str("ai_api_key") or ""
+
     def _transcribe_cloud(self, audio_path: Path, provider: str) -> str:
-        api_key = self._settings.get_str("ai_api_key")
+        api_key = self._get_transcription_api_key(provider)
         language = self._settings.get_str("transcription_language")
         lang_param = None if language == "auto" else language
 
@@ -247,8 +263,8 @@ class TranscriptionService:
         elif provider == "deepgram":
             return self._transcribe_deepgram(audio_bytes, api_key, lang_param)
         elif provider == "custom":
-            custom_url = self._settings.get_str("custom_ai_base_url")
-            custom_model = self._settings.get_str("custom_ai_model") or "whisper-1"
+            custom_url = self._settings.get_str("custom_transcription_base_url") or self._settings.get_str("custom_ai_base_url") or ""
+            custom_model = self._settings.get_str("custom_transcription_model") or "whisper-1"
             return self._transcribe_openai_compat(
                 audio_bytes=audio_bytes,
                 audio_filename=audio_path.name,

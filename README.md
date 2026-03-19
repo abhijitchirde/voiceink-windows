@@ -4,6 +4,12 @@ A Windows port of [VoiceInk](https://github.com/Beingpax/VoiceInk), the macOS vo
 
 ---
 
+# Important note
+
+This work is in progress and evolving. Please use at your own risk.
+
+---
+
 ## Features
 
 - Global hotkey to start/stop recording from anywhere
