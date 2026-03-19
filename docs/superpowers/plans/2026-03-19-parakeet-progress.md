@@ -22,7 +22,7 @@
   - Files: `voiceink/services/transcription.py`, `voiceink/services/engine.py`
   - Status: ✅ Done + spec & quality reviewed
 
-- [ ] **Task 4** — Update `settings_window.py` badge and Provider tab guard
+- [x] **Task 4** — Update `settings_window.py` badge and Provider tab guard
   - Files: `voiceink/ui/settings_window.py`
   - What to do:
     1. In `_update_badge()`: add `parakeet` branch before `else` (see plan lines 720–737)
@@ -31,22 +31,17 @@
     4. Smoke test: `python main.py` → open Settings → AI Models
     5. Commit
 
-- [ ] **Task 5** — Build NeMo Parakeet UI section (`_dep_banner`, `_parakeet_card`, `_build_parakeet_nemo_section`)
+- [x] **Task 5** — Build NeMo Parakeet UI section (`_dep_banner`, `_parakeet_card`, `_build_parakeet_nemo_section`)
   - Files: `voiceink/ui/settings_window.py`
   - See plan lines 809–1193 for full code
 
-- [ ] **Task 6** — Build Community UI section (`_build_parakeet_community_section`)
-  - Files: `voiceink/ui/settings_window.py`
-  - See plan lines 1197–1446 for full code
+- [x] **Task 6** — Build Community UI section (`_build_parakeet_community_section`)
 
-- [ ] **Task 7** — Wire sections into `_build_ai_models_panel` with shared state
-  - Files: `voiceink/ui/settings_window.py`
-  - See plan lines 1451–1613 for full code
-  - Key: set_default patching, `_parakeet_refresh_hook`, `_refresh_all_parakeet_cards`
+- [x] **Task 7** — Wire sections into `_build_ai_models_panel` with shared state
 
-- [ ] **Task 8** — Update `requirements.txt` and final polish
-  - Append commented optional dep blocks (see plan lines 1622–1639)
-  - Final test run + smoke test
+- [x] **Task 8** — Update `requirements.txt` and final polish
+
+## ✅ ALL TASKS COMPLETE
 
 ## How to Resume
 
