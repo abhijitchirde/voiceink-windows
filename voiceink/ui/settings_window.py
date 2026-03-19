@@ -322,6 +322,343 @@ class SettingsWindow:
             font=FONT, command=command, relief="flat",
         )
 
+    # ── Parakeet UI helpers ───────────────────────────────────────────────────
+
+    def _dep_banner(self, parent, lines: list, btn_text: str,
+                    on_install, warn_lines: list = None):
+        """Renders a dependency warning banner with an install button.
+        Returns (banner_wrap, install_btn, progress_lbl)."""
+        BANNER_BG     = "#FFF8E1"
+        BANNER_BORDER = "#F59E0B"
+        WARN_FG       = "#92400E"
+
+        wrap = tk.Frame(parent, bg=CONTENT_BG, padx=24, pady=0)
+        wrap.pack(fill="x", pady=(0, 4))
+
+        banner = tk.Frame(wrap, bg=BANNER_BG, highlightthickness=1,
+                          highlightbackground=BANNER_BORDER)
+        banner.pack(fill="x")
+        inner = tk.Frame(banner, bg=BANNER_BG, padx=14, pady=10)
+        inner.pack(fill="x")
+
+        for line in lines:
+            tk.Label(inner, text=line, bg=BANNER_BG, fg=WARN_FG,
+                     font=FONT_SMALL, anchor="w", justify="left").pack(anchor="w")
+
+        if warn_lines:
+            for wl in warn_lines:
+                tk.Label(inner, text=wl, bg=BANNER_BG, fg="#DC2626",
+                         font=FONT_SMALL, anchor="w", justify="left").pack(anchor="w")
+
+        btn_row = tk.Frame(inner, bg=BANNER_BG)
+        btn_row.pack(anchor="w", pady=(6, 0))
+
+        install_btn = tk.Button(
+            btn_row, text=btn_text, bg=ACCENT, fg="white",
+            relief="flat", bd=0, font=FONT_SMALL, cursor="hand2",
+            padx=12, pady=5, activebackground="#4F46E5", activeforeground="white",
+            command=on_install,
+        )
+        install_btn.pack(side="left")
+
+        progress_lbl = tk.Label(btn_row, text="", bg=BANNER_BG, fg=TEXT_MUTED,
+                                 font=FONT_SMALL)
+        progress_lbl.pack(side="left", padx=(10, 0))
+
+        return wrap, install_btn, progress_lbl
+
+    def _parakeet_card(self, parent, key: str, meta: dict,
+                       is_selected: bool, is_downloaded: bool,
+                       deps_ok: bool, on_action, on_delete):
+        """Render one Parakeet model card. Returns (card_frame, action_btn, del_btn, bg_widgets)."""
+        bg     = ACCENT_LIGHT if is_selected else CARD_BG
+        border = ACCENT       if is_selected else CARD_BORDER
+
+        cf = tk.Frame(parent, bg=bg, highlightthickness=1, highlightbackground=border)
+        cf.pack(fill="x", pady=4)
+
+        inner_p = tk.Frame(cf, bg=bg, padx=14, pady=10)
+        inner_p.pack(fill="x")
+
+        left  = tk.Frame(inner_p, bg=bg)
+        left.pack(side="left", fill="x", expand=True)
+        right = tk.Frame(inner_p, bg=bg)
+        right.pack(side="right", padx=(8, 0))
+
+        # Title row with badges
+        title_row = tk.Frame(left, bg=bg)
+        title_row.pack(fill="x")
+
+        title_lbl = tk.Label(title_row, text=meta["display"], bg=bg, fg=HEADING,
+                             font=FONT_BOLD)
+        title_lbl.pack(side="left")
+
+        BADGE_BG = ACCENT_LIGHT
+        BADGE_FG = ACCENT
+        tk.Frame(title_row, bg=bg, width=6).pack(side="left")
+        tk.Label(title_row, text=meta["backend"].replace("_", "-"),
+                 bg=BADGE_BG, fg=BADGE_FG, font=FONT_SMALL,
+                 padx=5, pady=1).pack(side="left")
+
+        if meta.get("quantization"):
+            tk.Frame(title_row, bg=bg, width=4).pack(side="left")
+            tk.Label(title_row, text=meta["quantization"],
+                     bg=BADGE_BG, fg=BADGE_FG, font=FONT_SMALL,
+                     padx=5, pady=1).pack(side="left")
+
+        if meta.get("cuda_badge"):
+            CUDA_BG = "#FEF3C7"
+            CUDA_FG = "#D97706"
+            label = "CUDA required" if meta["cuda_badge"] == "required" else "CUDA recommended"
+            tk.Frame(title_row, bg=bg, width=4).pack(side="left")
+            tk.Label(title_row, text=label,
+                     bg=CUDA_BG, fg=CUDA_FG, font=FONT_SMALL,
+                     padx=5, pady=1).pack(side="left")
+
+        # Metadata line
+        size_str = (f"{meta['size_mb']} MB" if meta["size_mb"] < 1000
+                    else f"{meta['size_mb']/1000:.1f} GB")
+        meta_parts = [meta["language"], size_str, meta["backend"].replace("_", "-")]
+        if meta.get("quantization"):
+            meta_parts.append(meta["quantization"])
+        meta_lbl = tk.Label(left, text="  ·  ".join(meta_parts),
+                            bg=bg, fg=TEXT_MUTED, font=FONT_SMALL, anchor="w")
+        meta_lbl.pack(anchor="w", pady=(1, 0))
+
+        # Description
+        desc_lbl = tk.Label(left, text=meta["description"], bg=bg, fg=TEXT_MUTED,
+                            font=FONT_SMALL, justify="left", anchor="w", wraplength=500)
+        desc_lbl.pack(anchor="w", pady=(2, 4))
+
+        # Speed / Accuracy dots
+        bars_row  = tk.Frame(left, bg=bg)
+        bars_row.pack(anchor="w")
+        bar_labels, bar_spacers = [], []
+        for bar_label, filled in [("Speed", meta["speed"]), ("Accuracy", meta["accuracy"])]:
+            lbl = tk.Label(bars_row, text=bar_label, bg=bg, fg=TEXT_MUTED,
+                           font=FONT_SMALL, width=8, anchor="w")
+            lbl.pack(side="left")
+            bar_labels.append(lbl)
+            for i in range(5):
+                tk.Frame(bars_row, bg=ACCENT if i < filled else CARD_BORDER,
+                         width=8, height=5).pack(side="left", padx=1)
+            spacer = tk.Frame(bars_row, bg=bg, width=14)
+            spacer.pack(side="left")
+            bar_spacers.append(spacer)
+
+        # Action button
+        btn_wrap = tk.Frame(right, bg=bg)
+        btn_wrap.pack(anchor="center")
+
+        if not deps_ok:
+            btn_text, btn_state, btn_cursor, btn_bg = "Needs deps", "disabled", "arrow", TEXT_MUTED
+        elif is_selected:
+            btn_text, btn_state, btn_cursor, btn_bg = "Default", "disabled", "arrow", SUCCESS
+        elif is_downloaded:
+            btn_text, btn_state, btn_cursor, btn_bg = "Set as Default", "normal", "hand2", ACCENT
+        else:
+            btn_text, btn_state, btn_cursor, btn_bg = "Download", "normal", "hand2", ACCENT
+
+        action_btn = tk.Button(btn_wrap, text=btn_text, bg=btn_bg, fg="white",
+                               relief="flat", bd=0, font=FONT_SMALL,
+                               cursor=btn_cursor, padx=10, pady=5,
+                               state=btn_state,
+                               activebackground="#4F46E5", activeforeground="white",
+                               command=on_action)
+        action_btn.pack(side="left")
+
+        del_btn = tk.Button(btn_wrap, text="\U0001f5d1", bg=ERROR, fg="white",
+                            relief="flat", bd=0, font=("Segoe UI", 9),
+                            cursor="hand2", padx=6, pady=5,
+                            activebackground="#DC2626", activeforeground="white",
+                            command=on_delete)
+        if is_downloaded:
+            del_btn.pack(side="left", padx=(6, 0))
+
+        bg_widgets = [cf, inner_p, left, right, title_row, title_lbl,
+                      meta_lbl, desc_lbl, bars_row, btn_wrap,
+                      *bar_labels, *bar_spacers]
+
+        return cf, action_btn, del_btn, bg_widgets
+
+    def _build_parakeet_nemo_section(self, parent, cur_parakeet_key_var: list,
+                                      parakeet_downloaded: set,
+                                      parakeet_downloading: set,
+                                      on_set_parakeet_default,
+                                      on_clear_parakeet,
+                                      refresh_all_parakeet):
+        """Build the NeMo backend section. Returns (card_registry, nemo_ok)."""
+        import sys
+        import threading
+        from voiceink.services.parakeet_transcription import (
+            PARAKEET_MODELS, check_backend_available, check_cuda_available,
+            check_model_downloaded, download_parakeet_model, delete_parakeet_model,
+            BACKEND_PIP_CMDS,
+        )
+        from tkinter import messagebox
+
+        IS_FROZEN = getattr(sys, 'frozen', False)
+        nemo_keys = [k for k, m in PARAKEET_MODELS.items() if m["backend"] == "nemo"]
+        nemo_ok   = [False]
+
+        self._section_label(parent, "NVIDIA Parakeet — NeMo Backend")
+
+        banner_ref = [None]
+
+        def _install_nemo():
+            install_btn.configure(text="Installing\u2026", state="disabled", bg=TEXT_MUTED)
+            progress_lbl.configure(text="")
+
+            def _run():
+                import subprocess
+                pkgs = BACKEND_PIP_CMDS["nemo"]
+                flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "pip", "install"] + pkgs,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                    creationflags=flags,
+                )
+                while True:
+                    line = proc.stdout.readline()
+                    if not line and proc.poll() is not None:
+                        break
+                    if line.strip():
+                        install_btn.after(0, lambda l=line.strip():
+                                          progress_lbl.configure(text=l[:60]))
+                rc = proc.wait()
+                if rc == 0:
+                    install_btn.after(0, _on_install_done)
+                else:
+                    err = (proc.stderr.read() or "Unknown error")[-120:]
+                    install_btn.after(0, lambda e=err: _on_install_error(e))
+
+            threading.Thread(target=_run, daemon=True).start()
+
+        def _on_install_done():
+            nemo_ok[0] = True
+            banner_ref[0][0].pack_forget()
+            refresh_all_parakeet()
+
+        def _on_install_error(err):
+            install_btn.configure(text="Retry", state="normal", bg=ERROR,
+                                  activebackground="#DC2626")
+            progress_lbl.configure(text=err[:80], fg=ERROR)
+
+        if IS_FROZEN:
+            info_wrap = tk.Frame(parent, bg=CONTENT_BG, padx=24)
+            info_wrap.pack(fill="x", pady=(0, 4))
+            info = tk.Frame(info_wrap, bg="#EFF6FF", highlightthickness=1,
+                            highlightbackground="#BFDBFE")
+            info.pack(fill="x")
+            info_inner = tk.Frame(info, bg="#EFF6FF", padx=14, pady=8)
+            info_inner.pack(fill="x")
+            tk.Label(info_inner,
+                     text="\u2139  Parakeet NeMo models require running VoiceInk from source.\n"
+                          "   pip install is not available in the packaged app.",
+                     bg="#EFF6FF", fg="#1D4ED8", font=FONT_SMALL,
+                     justify="left", anchor="w").pack(anchor="w")
+            nemo_ok[0] = False
+            install_btn = None
+            progress_lbl = None
+        else:
+            nemo_ok[0] = check_backend_available("nemo")
+            cuda_ok = check_cuda_available()
+            cuda_text = ("\u2713  CUDA GPU detected \u2014 recommended for 0.6B+ models"
+                         if cuda_ok else
+                         "No CUDA GPU detected \u2014 only 110M model practical on CPU")
+            cuda_fg = SUCCESS if cuda_ok else TEXT_MUTED
+
+            if not nemo_ok[0]:
+                lines     = ["\u26a0  NeMo backend not installed",
+                             "   Requires: nemo_toolkit[asr] + torch"]
+                warn_lines = ["   \u26a0  NeMo is Linux-primary \u2014 may require WSL2 on Windows"]
+                wrap, install_btn, progress_lbl = self._dep_banner(
+                    parent, lines, "Install NeMo + PyTorch", _install_nemo, warn_lines
+                )
+                banner_inner = wrap.winfo_children()[0].winfo_children()[0]
+                tk.Label(banner_inner, text=f"   {cuda_text}",
+                         bg="#FFF8E1", fg=cuda_fg, font=FONT_SMALL, anchor="w"
+                         ).pack(anchor="w", before=banner_inner.winfo_children()[-2])
+                banner_ref[0] = (wrap, install_btn, progress_lbl)
+            else:
+                install_btn = None
+                progress_lbl = None
+
+        stack = tk.Frame(parent, bg=CONTENT_BG, padx=24)
+        stack.pack(fill="x", pady=(0, 8))
+
+        card_registry = []
+
+        def _start_download(k):
+            parakeet_downloading.add(k)
+            for reg_key, cf, action_btn, del_btn, _ in card_registry:
+                if reg_key == k:
+                    action_btn.configure(text="Downloading\u2026", state="disabled",
+                                         bg=TEXT_MUTED, activebackground=TEXT_MUTED)
+                    break
+
+            def _on_done():
+                parakeet_downloading.discard(k)
+                parakeet_downloaded.add(k)
+                refresh_all_parakeet()
+
+            def _on_error(err):
+                parakeet_downloading.discard(k)
+                for reg_key, cf, action_btn, del_btn, _ in card_registry:
+                    if reg_key == k:
+                        action_btn.configure(text="Retry", state="normal", bg=ERROR,
+                                             activebackground="#DC2626",
+                                             command=lambda key=k: _start_download(key))
+                        break
+
+            download_parakeet_model(
+                k,
+                on_progress=lambda _: None,
+                on_done=lambda: action_btn.after(0, _on_done),
+                on_error=lambda e: action_btn.after(0, _on_error, e),
+            )
+
+        for key in nemo_keys:
+            meta    = PARAKEET_MODELS[key]
+            is_sel  = (cur_parakeet_key_var[0] == key)
+            is_dl   = key in parakeet_downloaded
+            deps_ok = nemo_ok[0]
+
+            def _make_action(k=key):
+                def _action():
+                    if not nemo_ok[0] or k in parakeet_downloading:
+                        return
+                    if k in parakeet_downloaded:
+                        on_set_parakeet_default(k, "nemo")
+                    else:
+                        _start_download(k)
+                return _action
+
+            def _make_delete(k=key):
+                def _delete():
+                    if not messagebox.askyesno(
+                        "Delete Model",
+                        f"Delete '{PARAKEET_MODELS[k]['display']}' model files?\n"
+                        "You can re-download it later.",
+                        parent=self._window
+                    ):
+                        return
+                    delete_parakeet_model(k)
+                    parakeet_downloaded.discard(k)
+                    if cur_parakeet_key_var[0] == k:
+                        cur_parakeet_key_var[0] = None
+                        on_clear_parakeet()
+                    refresh_all_parakeet()
+                return _delete
+
+            cf, action_btn, del_btn, bg_w = self._parakeet_card(
+                stack, key, meta, is_sel, is_dl, deps_ok,
+                _make_action(), _make_delete()
+            )
+            card_registry.append((key, cf, action_btn, del_btn, bg_w))
+
+        return card_registry, nemo_ok
+
     # ── Dashboard ─────────────────────────────────────────────────────────────
 
     def _build_dashboard_panel(self, parent):
