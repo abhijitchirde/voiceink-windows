@@ -69,6 +69,10 @@ _DEFAULTS: dict[str, Any] = {
     # History
     "history_max_items": 500,
     "auto_cleanup_days": 30,
+
+    # Parakeet local models
+    "parakeet_model_key": "",   # e.g. "parakeet-nemo-110m" — empty = none selected
+    "parakeet_backend":   "",   # "nemo" | "sherpa_onnx" | "transformers" — empty = none
 }
 
 
