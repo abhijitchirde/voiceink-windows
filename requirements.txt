@@ -25,3 +25,16 @@ Pillow>=10.0.0
 #torch>=2.0.0          # required by faster-whisper GPU mode
 #nvidia-cublas-cu12    # CUDA dependencies (Windows)
 #nvidia-cudnn-cu12
+
+# ── Optional — NVIDIA Parakeet NeMo backend ───────────────────────────────
+# Uncomment and install manually if you want NeMo Parakeet models:
+# Note: nemo_toolkit is Linux-primary; Windows support is experimental.
+#nemo_toolkit[asr]>=2.0    # NVIDIA NeMo ASR framework
+#torch>=2.0.0              # Required by NeMo
+
+# ── Optional — Parakeet Community: sherpa-onnx (no PyTorch, CPU-first) ────
+#sherpa-onnx               # ONNX runtime for quantized Parakeet models
+
+# ── Optional — Parakeet Community: HF Transformers CTC ───────────────────
+#transformers>=4.47.0      # Required for ParakeetForCTC auto-class resolution
+#torchaudio                # Required by HF Transformers ASR pipeline
