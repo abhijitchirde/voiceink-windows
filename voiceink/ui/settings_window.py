@@ -398,7 +398,7 @@ class SettingsWindow:
                                  font=FONT_SMALL)
         progress_lbl.pack(side="left", padx=(10, 0))
 
-        return wrap, install_btn, progress_lbl
+        return wrap, install_btn, progress_lbl, inner
 
     def _parakeet_card(self, parent, key: str, meta: dict,
                        is_selected: bool, is_downloaded: bool,
@@ -602,18 +602,17 @@ class SettingsWindow:
             cuda_fg = SUCCESS if cuda_ok else TEXT_MUTED
 
             if not nemo_ok[0]:
-                lines     = ["\u26a0  NeMo backend not installed",
-                             "   Requires: nemo_toolkit[asr] + torch"]
+                lines = [
+                    "\u26a0  NeMo backend not installed",
+                    "   Requires: nemo_toolkit[asr] + torch",
+                    f"   {cuda_text}",
+                ]
                 warn_lines = ["   \u26a0  NeMo is Linux-primary \u2014 may require WSL2 on Windows"]
                 nemo_pip = "pip install " + " ".join(BACKEND_PIP_CMDS["nemo"])
-                wrap, install_btn, progress_lbl = self._dep_banner(
+                wrap, install_btn, progress_lbl, _ = self._dep_banner(
                     parent, lines, "Install NeMo + PyTorch", _install_nemo, warn_lines,
                     pip_cmd=nemo_pip,
                 )
-                banner_inner = wrap.winfo_children()[0].winfo_children()[0]
-                tk.Label(banner_inner, text=f"   {cuda_text}",
-                         bg="#FFF8E1", fg=cuda_fg, font=FONT_SMALL, anchor="w"
-                         ).pack(anchor="w", before=banner_inner.winfo_children()[-2])
                 banner_ref[0] = (wrap, install_btn, progress_lbl)
             else:
                 install_btn = None
@@ -785,7 +784,7 @@ class SettingsWindow:
             onnx_banner_ref = [None]
             if not onnx_ok[0]:
                 onnx_pip = "pip install " + " ".join(BACKEND_PIP_CMDS["sherpa_onnx"])
-                wrap, btn, prog = self._dep_banner(
+                wrap, btn, prog, _ = self._dep_banner(
                     parent,
                     ["\u26a0  sherpa-onnx not installed",
                      "   Requires: sherpa-onnx (no PyTorch needed, CPU-first)"],
@@ -799,7 +798,7 @@ class SettingsWindow:
             hf_banner_ref = [None]
             if not hf_ok[0]:
                 hf_pip = "pip install " + " ".join(BACKEND_PIP_CMDS["transformers"])
-                wrap, btn, prog = self._dep_banner(
+                wrap, btn, prog, _ = self._dep_banner(
                     parent,
                     ["\u26a0  transformers not installed (or version < 4.47)",
                      "   Requires: transformers>=4.47 + torch + torchaudio"],
