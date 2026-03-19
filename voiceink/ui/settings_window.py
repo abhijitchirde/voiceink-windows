@@ -1538,6 +1538,7 @@ class SettingsWindow:
             cur_parakeet_key_var[0] = ""
             self._settings.set("parakeet_model_key", "")
             self._settings.set("parakeet_backend", "")
+            self._settings.set("transcription_provider", "local")
             _update_badge()
 
         def _refresh_all_parakeet_cards():
