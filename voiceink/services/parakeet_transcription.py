@@ -226,6 +226,9 @@ class ParakeetModelCache:
         with self._lock:
             if self._model is not None and self._loaded_key == key:
                 return self._model
+            # _load() is intentionally called while holding the lock.
+            # This is safe because transcribe_parakeet() is always called
+            # from a background thread, never from the tkinter main thread.
             self._load(key, backend)
             return self._model
 
@@ -328,7 +331,9 @@ def download_parakeet_model(
 def delete_parakeet_model(key: str) -> None:
     """Unload from cache (releases Windows file locks), then delete model dir."""
     import shutil
-    _model_cache.unload()
+    # Only unload if this specific model is cached (avoids evicting a different hot model)
+    if _model_cache._loaded_key == key:
+        _model_cache.unload()
     model_dir = MODELS_DIR_PARAKEET / key
     if model_dir.exists():
         shutil.rmtree(str(model_dir), ignore_errors=True)
@@ -371,12 +376,13 @@ def transcribe_parakeet(
     elif backend == "sherpa_onnx":
         import numpy as np
         with wave.open(str(audio_path)) as wf:
+            sample_rate = wf.getframerate()
             samples = (
                 np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
                 .astype(np.float32) / 32768.0
             )
         s = model.create_stream()
-        s.accept_waveform(16000, samples)
+        s.accept_waveform(sample_rate, samples)
         model.decode_streams([s])
         return s.result.text.strip()
 
