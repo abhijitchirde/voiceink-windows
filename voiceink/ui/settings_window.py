@@ -1506,6 +1506,103 @@ class SettingsWindow:
         stack_wrap = tk.Frame(lm_inner, bg=CONTENT_BG, padx=24)
         stack_wrap.pack(fill="x", pady=(0, 8))
 
+        # ── Shared Parakeet state (must be before Whisper loop for set_default rebind) ──
+        from voiceink.services.parakeet_transcription import PARAKEET_MODELS, check_model_downloaded
+
+        _init_parakeet_provider = self._settings.get_str("transcription_provider")
+        _init_parakeet_key = self._settings.get_str("parakeet_model_key") or ""
+        cur_parakeet_key_var = [
+            _init_parakeet_key if _init_parakeet_provider == "parakeet" else ""
+        ]
+
+        parakeet_downloading: set = set()
+        parakeet_downloaded: set = set()
+        for _pk in PARAKEET_MODELS:
+            if check_model_downloaded(_pk):
+                parakeet_downloaded.add(_pk)
+
+        parakeet_card_registries: list = []
+
+        def on_set_parakeet_default(key, backend):
+            cur_parakeet_key_var[0] = key
+            self._settings.set("parakeet_model_key", key)
+            self._settings.set("parakeet_backend", backend)
+            self._settings.set("transcription_provider", "parakeet")
+            self._settings.set("local_model_name", "")
+            cur_key_var[0] = None
+            _refresh_all_cards()
+            _update_badge()
+            _refresh_all_parakeet_cards()
+
+        def on_clear_parakeet():
+            cur_parakeet_key_var[0] = ""
+            self._settings.set("parakeet_model_key", "")
+            self._settings.set("parakeet_backend", "")
+            _update_badge()
+
+        def _refresh_all_parakeet_cards():
+            """Recompute and update button/bg state for every Parakeet card."""
+            from voiceink.services.parakeet_transcription import check_backend_available
+            nemo_ok   = check_backend_available("nemo")
+            onnx_ok   = check_backend_available("sherpa_onnx")
+            hf_ok     = check_backend_available("transformers")
+            backend_ok = {"nemo": nemo_ok, "sherpa_onnx": onnx_ok, "transformers": hf_ok}
+
+            current = cur_parakeet_key_var[0]
+            for registry in parakeet_card_registries:
+                for key, cf, action_btn, del_btn, bg_widgets in registry:
+                    meta    = PARAKEET_MODELS[key]
+                    backend = meta["backend"]
+                    deps    = backend_ok[backend]
+                    is_sel  = (current == key)
+                    is_dl   = key in parakeet_downloaded
+                    in_prog = key in parakeet_downloading
+
+                    bg     = ACCENT_LIGHT if is_sel else CARD_BG
+                    border = ACCENT       if is_sel else CARD_BORDER
+                    cf.configure(highlightbackground=border)
+                    for w in bg_widgets:
+                        try:
+                            w.configure(bg=bg)
+                        except Exception:
+                            pass
+
+                    if in_prog:
+                        continue
+
+                    if not deps:
+                        action_btn.configure(text="Needs deps", state="disabled",
+                                             bg=TEXT_MUTED, cursor="arrow")
+                        del_btn.pack_forget()
+                    elif is_sel:
+                        action_btn.configure(text="Default", state="disabled",
+                                             bg=SUCCESS, cursor="arrow")
+                        if is_dl:
+                            del_btn.pack(side="left", padx=(6, 0))
+                    elif is_dl:
+                        action_btn.configure(text="Set as Default", state="normal",
+                                             bg=ACCENT, cursor="hand2",
+                                             activebackground="#4F46E5")
+                        del_btn.pack(side="left", padx=(6, 0))
+                    else:
+                        action_btn.configure(text="Download", state="normal",
+                                             bg=ACCENT, cursor="hand2",
+                                             activebackground="#4F46E5")
+                        del_btn.pack_forget()
+
+        # ── Parakeet refresh hook ────────────────────────────────────────────────
+        _parakeet_refresh_hook: list = [None]
+
+        # Rebind set_default so selecting a Whisper model also clears Parakeet selection
+        _original_set_default = set_default
+        def set_default(key):  # noqa: F811
+            _original_set_default(key)
+            cur_parakeet_key_var[0] = ""
+            self._settings.set("parakeet_model_key", "")
+            self._settings.set("parakeet_backend", "")
+            if _parakeet_refresh_hook[0]:
+                _parakeet_refresh_hook[0]()
+
         for key, meta in LOCAL_MODELS.items():
             is_selected = (key == cur_key_var[0])
             is_dl = key in _downloaded
@@ -1597,6 +1694,22 @@ class SettingsWindow:
 
             # Store btn_wrap so _refresh_all_cards can recolor it
             model_bg_widgets[key].append(btn_wrap)
+
+        # ── Build Parakeet sections ────────────────────────────────────────────────
+        nemo_registry, _ = self._build_parakeet_nemo_section(
+            lm_inner, cur_parakeet_key_var, parakeet_downloaded, parakeet_downloading,
+            on_set_parakeet_default, on_clear_parakeet, _refresh_all_parakeet_cards,
+        )
+        parakeet_card_registries.append(nemo_registry)
+
+        comm_registry = self._build_parakeet_community_section(
+            lm_inner, cur_parakeet_key_var, parakeet_downloaded, parakeet_downloading,
+            on_set_parakeet_default, on_clear_parakeet, _refresh_all_parakeet_cards,
+        )
+        parakeet_card_registries.append(comm_registry)
+
+        # Wire the hook now that _refresh_all_parakeet_cards is defined
+        _parakeet_refresh_hook[0] = _refresh_all_parakeet_cards
 
         # Language & Prompt section
         self._section_label(lm_inner, "Language & Prompt")
