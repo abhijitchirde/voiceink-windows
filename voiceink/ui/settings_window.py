@@ -325,12 +325,14 @@ class SettingsWindow:
     # ── Parakeet UI helpers ───────────────────────────────────────────────────
 
     def _dep_banner(self, parent, lines: list, btn_text: str,
-                    on_install, warn_lines: list = None):
+                    on_install, warn_lines: list = None, pip_cmd: str = None):
         """Renders a dependency warning banner with an install button.
+        pip_cmd: the full pip install command to display and offer a Copy button for.
         Returns (banner_wrap, install_btn, progress_lbl)."""
         BANNER_BG     = "#FFF8E1"
         BANNER_BORDER = "#F59E0B"
         WARN_FG       = "#92400E"
+        CODE_BG       = "#FEF3C7"
 
         wrap = tk.Frame(parent, bg=CONTENT_BG, padx=24, pady=0)
         wrap.pack(fill="x", pady=(0, 4))
@@ -349,6 +351,37 @@ class SettingsWindow:
             for wl in warn_lines:
                 tk.Label(inner, text=wl, bg=BANNER_BG, fg="#DC2626",
                          font=FONT_SMALL, anchor="w", justify="left").pack(anchor="w")
+
+        # ── pip command display with Copy button ──────────────────────────────
+        if pip_cmd:
+            cmd_row = tk.Frame(inner, bg=BANNER_BG)
+            cmd_row.pack(fill="x", pady=(6, 0))
+
+            cmd_box = tk.Frame(cmd_row, bg=CODE_BG, highlightthickness=1,
+                               highlightbackground=BANNER_BORDER)
+            cmd_box.pack(side="left", fill="x", expand=True)
+            tk.Label(cmd_box, text=pip_cmd, bg=CODE_BG, fg="#92400E",
+                     font=("Consolas", 9), padx=8, pady=4,
+                     anchor="w", justify="left").pack(anchor="w")
+
+            copied_lbl = tk.Label(cmd_row, text="", bg=BANNER_BG, fg=TEXT_MUTED,
+                                  font=FONT_SMALL)
+
+            def _copy_cmd(cmd=pip_cmd):
+                inner.clipboard_clear()
+                inner.clipboard_append(cmd)
+                copied_lbl.configure(text="\u2713 Copied!")
+                inner.after(2000, lambda: copied_lbl.configure(text=""))
+
+            copy_btn = tk.Button(
+                cmd_row, text="Copy", bg=BANNER_BG, fg=WARN_FG,
+                relief="flat", bd=1, font=FONT_SMALL, cursor="hand2",
+                padx=8, pady=4,
+                highlightthickness=1, highlightbackground=BANNER_BORDER,
+                command=_copy_cmd,
+            )
+            copy_btn.pack(side="left", padx=(6, 0))
+            copied_lbl.pack(side="left", padx=(6, 0))
 
         btn_row = tk.Frame(inner, bg=BANNER_BG)
         btn_row.pack(anchor="w", pady=(6, 0))
@@ -572,8 +605,10 @@ class SettingsWindow:
                 lines     = ["\u26a0  NeMo backend not installed",
                              "   Requires: nemo_toolkit[asr] + torch"]
                 warn_lines = ["   \u26a0  NeMo is Linux-primary \u2014 may require WSL2 on Windows"]
+                nemo_pip = "pip install " + " ".join(BACKEND_PIP_CMDS["nemo"])
                 wrap, install_btn, progress_lbl = self._dep_banner(
-                    parent, lines, "Install NeMo + PyTorch", _install_nemo, warn_lines
+                    parent, lines, "Install NeMo + PyTorch", _install_nemo, warn_lines,
+                    pip_cmd=nemo_pip,
                 )
                 banner_inner = wrap.winfo_children()[0].winfo_children()[0]
                 tk.Label(banner_inner, text=f"   {cuda_text}",
@@ -749,24 +784,28 @@ class SettingsWindow:
             # sherpa-onnx banner
             onnx_banner_ref = [None]
             if not onnx_ok[0]:
+                onnx_pip = "pip install " + " ".join(BACKEND_PIP_CMDS["sherpa_onnx"])
                 wrap, btn, prog = self._dep_banner(
                     parent,
                     ["\u26a0  sherpa-onnx not installed",
                      "   Requires: sherpa-onnx (no PyTorch needed, CPU-first)"],
                     "Install sherpa-onnx",
                     _make_install_fn("sherpa_onnx", onnx_ok, onnx_banner_ref),
+                    pip_cmd=onnx_pip,
                 )
                 onnx_banner_ref[0] = (wrap, btn, prog)
 
             # HF Transformers banner
             hf_banner_ref = [None]
             if not hf_ok[0]:
+                hf_pip = "pip install " + " ".join(BACKEND_PIP_CMDS["transformers"])
                 wrap, btn, prog = self._dep_banner(
                     parent,
                     ["\u26a0  transformers not installed (or version < 4.47)",
                      "   Requires: transformers>=4.47 + torch + torchaudio"],
                     "Install HF Transformers",
                     _make_install_fn("transformers", hf_ok, hf_banner_ref),
+                    pip_cmd=hf_pip,
                 )
                 hf_banner_ref[0] = (wrap, btn, prog)
 
