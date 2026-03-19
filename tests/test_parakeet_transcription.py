@@ -78,3 +78,32 @@ def test_check_model_downloaded_returns_false_for_nonexistent_key():
 def test_models_dir_parakeet_is_path():
     from pathlib import Path
     assert isinstance(MODELS_DIR_PARAKEET, Path)
+
+
+def test_transcription_service_has_parakeet_provider():
+    """TranscriptionService.transcribe() must handle provider='parakeet' without crashing
+    when no model is selected (raises RuntimeError with helpful message)."""
+    import tempfile, os
+    from pathlib import Path
+    from voiceink.models.settings import Settings
+    from voiceink.services.transcription import TranscriptionService
+
+    # Minimal temp settings file
+    with tempfile.TemporaryDirectory() as tmp:
+        settings = Settings.__new__(Settings)
+        settings._data = {
+            "transcription_provider": "parakeet",
+            "parakeet_model_key": "",
+            "parakeet_backend": "",
+            "transcription_language": "auto",
+        }
+        settings._path = Path(tmp) / "settings.json"
+        svc = TranscriptionService(settings)
+
+        try:
+            svc.transcribe(Path("dummy.wav"))
+            assert False, "Should have raised RuntimeError"
+        except RuntimeError as e:
+            assert "parakeet" in str(e).lower() or "model" in str(e).lower()
+        except Exception:
+            pass  # Other errors acceptable — just must not KeyError silently

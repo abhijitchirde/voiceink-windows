@@ -201,8 +201,15 @@ class VoiceInkEngine:
                     self._fire_error(f"Enhancement failed (using raw): {e}")
 
             # --- Save to history ---
-            model_name = self._settings.get_str("local_model_name") or \
-                         self._settings.get_str("transcription_provider")
+            provider = self._settings.get_str("transcription_provider")
+            if provider == "local":
+                model_name = self._settings.get_str("local_model_name") or "local"
+            elif provider == "parakeet":
+                key     = self._settings.get_str("parakeet_model_key") or "unknown"
+                backend = self._settings.get_str("parakeet_backend") or ""
+                model_name = f"{key} ({backend})" if backend else key
+            else:
+                model_name = provider
             record = TranscriptionRecord(
                 text=raw_text,
                 enhanced_text=enhanced_text,

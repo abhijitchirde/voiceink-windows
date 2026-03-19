@@ -156,6 +156,8 @@ class TranscriptionService:
 
         if provider == "local":
             return self._transcribe_local(audio_path, on_progress)
+        elif provider == "parakeet":
+            return self._transcribe_parakeet(audio_path, on_progress)
         elif provider in ("groq", "openai", "deepgram", "custom"):
             return self._transcribe_cloud(audio_path, provider)
         else:
@@ -217,6 +219,23 @@ class TranscriptionService:
             text_parts.append(seg.text.strip())
 
         return " ".join(text_parts).strip()
+
+    # ------------------------------------------------------------------
+    # Parakeet (NVIDIA NeMo / Sherpa-ONNX / Transformers) transcription
+    # ------------------------------------------------------------------
+
+    def _transcribe_parakeet(
+        self,
+        audio_path: Path,
+        on_progress: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        from voiceink.services.parakeet_transcription import transcribe_parakeet
+        key     = self._settings.get_str("parakeet_model_key")
+        backend = self._settings.get_str("parakeet_backend")
+        lang    = self._settings.get_str("transcription_language") or None
+        if lang == "auto":
+            lang = None
+        return transcribe_parakeet(audio_path, key, backend, lang, on_progress)
 
     # ------------------------------------------------------------------
     # Cloud transcription
