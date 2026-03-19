@@ -659,6 +659,237 @@ class SettingsWindow:
 
         return card_registry, nemo_ok
 
+    def _build_parakeet_community_section(self, parent, cur_parakeet_key_var: list,
+                                           parakeet_downloaded: set,
+                                           parakeet_downloading: set,
+                                           on_set_parakeet_default,
+                                           on_clear_parakeet,
+                                           refresh_all_parakeet):
+        """Build the Community backend section (sherpa-onnx + HF Transformers).
+        Returns list of (key, cf, action_btn, del_btn, bg_widgets) tuples."""
+        import sys
+        import threading
+        from voiceink.services.parakeet_transcription import (
+            PARAKEET_MODELS, check_backend_available,
+            check_model_downloaded, download_parakeet_model, delete_parakeet_model,
+            BACKEND_PIP_CMDS,
+        )
+        from tkinter import messagebox
+
+        IS_FROZEN = getattr(sys, 'frozen', False)
+        onnx_keys = [k for k, m in PARAKEET_MODELS.items() if m["backend"] == "sherpa_onnx"]
+        hf_keys   = [k for k, m in PARAKEET_MODELS.items() if m["backend"] == "transformers"]
+
+        onnx_ok = [False]
+        hf_ok   = [False]
+
+        self._section_label(parent, "NVIDIA Parakeet \u2014 Community (sherpa-onnx \u00b7 HF Transformers)")
+
+        card_registry = []
+
+        def _make_install_fn(backend_key, ok_ref, banner_ref_list):
+            def _install():
+                install_btn_ref = banner_ref_list[0][1]
+                progress_lbl_ref = banner_ref_list[0][2]
+                install_btn_ref.configure(text="Installing\u2026", state="disabled", bg=TEXT_MUTED)
+                progress_lbl_ref.configure(text="")
+
+                def _run():
+                    import subprocess
+                    pkgs = BACKEND_PIP_CMDS[backend_key]
+                    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                    proc = subprocess.Popen(
+                        [sys.executable, "-m", "pip", "install"] + pkgs,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                        creationflags=flags,
+                    )
+                    while True:
+                        line = proc.stdout.readline()
+                        if not line and proc.poll() is not None:
+                            break
+                        if line.strip():
+                            install_btn_ref.after(
+                                0, lambda l=line.strip():
+                                progress_lbl_ref.configure(text=l[:60])
+                            )
+                    rc = proc.wait()
+                    if rc == 0:
+                        def _done():
+                            ok_ref[0] = True
+                            banner_ref_list[0][0].pack_forget()
+                            refresh_all_parakeet()
+                        install_btn_ref.after(0, _done)
+                    else:
+                        err = (proc.stderr.read() or "Unknown error")[-120:]
+                        def _err(e=err):
+                            install_btn_ref.configure(text="Retry", state="normal",
+                                                       bg=ERROR, activebackground="#DC2626")
+                            progress_lbl_ref.configure(text=e[:80], fg=ERROR)
+                        install_btn_ref.after(0, _err)
+
+                threading.Thread(target=_run, daemon=True).start()
+            return _install
+
+        if IS_FROZEN:
+            info_wrap = tk.Frame(parent, bg=CONTENT_BG, padx=24)
+            info_wrap.pack(fill="x", pady=(0, 4))
+            info_inner = tk.Frame(info_wrap, bg="#EFF6FF", highlightthickness=1,
+                                  highlightbackground="#BFDBFE")
+            info_inner.pack(fill="x")
+            info_content = tk.Frame(info_inner, bg="#EFF6FF", padx=14, pady=8)
+            info_content.pack(fill="x")
+            tk.Label(info_content,
+                     text="\u2139  Parakeet Community models require running VoiceInk from source.",
+                     bg="#EFF6FF", fg="#1D4ED8", font=FONT_SMALL,
+                     justify="left", anchor="w").pack(anchor="w")
+        else:
+            onnx_ok[0] = check_backend_available("sherpa_onnx")
+            hf_ok[0]   = check_backend_available("transformers")
+
+            # sherpa-onnx banner
+            onnx_banner_ref = [None]
+            if not onnx_ok[0]:
+                wrap, btn, prog = self._dep_banner(
+                    parent,
+                    ["\u26a0  sherpa-onnx not installed",
+                     "   Requires: sherpa-onnx (no PyTorch needed, CPU-first)"],
+                    "Install sherpa-onnx",
+                    _make_install_fn("sherpa_onnx", onnx_ok, onnx_banner_ref),
+                )
+                onnx_banner_ref[0] = (wrap, btn, prog)
+
+            # HF Transformers banner
+            hf_banner_ref = [None]
+            if not hf_ok[0]:
+                wrap, btn, prog = self._dep_banner(
+                    parent,
+                    ["\u26a0  transformers not installed (or version < 4.47)",
+                     "   Requires: transformers>=4.47 + torch + torchaudio"],
+                    "Install HF Transformers",
+                    _make_install_fn("transformers", hf_ok, hf_banner_ref),
+                )
+                hf_banner_ref[0] = (wrap, btn, prog)
+
+        def _start_download(k, backend):
+            parakeet_downloading.add(k)
+            for reg_key, cf, action_btn, del_btn, _ in card_registry:
+                if reg_key == k:
+                    action_btn.configure(text="Downloading\u2026", state="disabled",
+                                         bg=TEXT_MUTED, activebackground=TEXT_MUTED)
+                    break
+
+            def _on_done():
+                parakeet_downloading.discard(k)
+                parakeet_downloaded.add(k)
+                refresh_all_parakeet()
+
+            def _on_error(err):
+                parakeet_downloading.discard(k)
+                for reg_key, cf, action_btn, del_btn, _ in card_registry:
+                    if reg_key == k:
+                        action_btn.configure(text="Retry", state="normal", bg=ERROR,
+                                             activebackground="#DC2626",
+                                             command=lambda key=k, be=backend: _start_download(key, be))
+                        break
+
+            download_parakeet_model(
+                k,
+                on_progress=lambda _: None,
+                on_done=lambda: action_btn.after(0, _on_done),
+                on_error=lambda e: action_btn.after(0, _on_error, e),
+            )
+
+        # ── sherpa-onnx cards ──────────────────────────────────────────────────
+        tk.Label(parent, text="sherpa-onnx (ONNX, no PyTorch required)",
+                 bg=CONTENT_BG, fg=TEXT_MUTED, font=FONT_SMALL,
+                 padx=24).pack(anchor="w", pady=(8, 2))
+
+        onnx_stack = tk.Frame(parent, bg=CONTENT_BG, padx=24)
+        onnx_stack.pack(fill="x", pady=(0, 4))
+
+        for key in onnx_keys:
+            meta    = PARAKEET_MODELS[key]
+            is_sel  = (cur_parakeet_key_var[0] == key)
+            is_dl   = key in parakeet_downloaded
+            deps_ok = onnx_ok[0]
+
+            def _make_action(k=key):
+                def _action():
+                    if not onnx_ok[0] or k in parakeet_downloading:
+                        return
+                    if k in parakeet_downloaded:
+                        on_set_parakeet_default(k, "sherpa_onnx")
+                    else:
+                        _start_download(k, "sherpa_onnx")
+                return _action
+
+            def _make_delete(k=key):
+                def _delete():
+                    if not messagebox.askyesno("Delete Model",
+                        f"Delete '{PARAKEET_MODELS[k]['display']}' model files?",
+                        parent=self._window):
+                        return
+                    delete_parakeet_model(k)
+                    parakeet_downloaded.discard(k)
+                    if cur_parakeet_key_var[0] == k:
+                        cur_parakeet_key_var[0] = None
+                        on_clear_parakeet()
+                    refresh_all_parakeet()
+                return _delete
+
+            cf, action_btn, del_btn, bg_w = self._parakeet_card(
+                onnx_stack, key, meta, is_sel, is_dl, deps_ok,
+                _make_action(), _make_delete()
+            )
+            card_registry.append((key, cf, action_btn, del_btn, bg_w))
+
+        # ── HF Transformers cards ──────────────────────────────────────────────
+        tk.Frame(parent, bg=CONTENT_BG, height=8).pack()
+        tk.Label(parent, text="HF Transformers CTC (official NVIDIA repos)",
+                 bg=CONTENT_BG, fg=TEXT_MUTED, font=FONT_SMALL,
+                 padx=24).pack(anchor="w", pady=(0, 2))
+
+        hf_stack = tk.Frame(parent, bg=CONTENT_BG, padx=24)
+        hf_stack.pack(fill="x", pady=(0, 4))
+
+        for key in hf_keys:
+            meta    = PARAKEET_MODELS[key]
+            is_sel  = (cur_parakeet_key_var[0] == key)
+            is_dl   = key in parakeet_downloaded
+            deps_ok = hf_ok[0]
+
+            def _make_action(k=key):
+                def _action():
+                    if not hf_ok[0] or k in parakeet_downloading:
+                        return
+                    if k in parakeet_downloaded:
+                        on_set_parakeet_default(k, "transformers")
+                    else:
+                        _start_download(k, "transformers")
+                return _action
+
+            def _make_delete(k=key):
+                def _delete():
+                    if not messagebox.askyesno("Delete Model",
+                        f"Delete '{PARAKEET_MODELS[k]['display']}' model files?",
+                        parent=self._window):
+                        return
+                    delete_parakeet_model(k)
+                    parakeet_downloaded.discard(k)
+                    if cur_parakeet_key_var[0] == k:
+                        cur_parakeet_key_var[0] = None
+                        on_clear_parakeet()
+                    refresh_all_parakeet()
+                return _delete
+
+            cf, action_btn, del_btn, bg_w = self._parakeet_card(
+                hf_stack, key, meta, is_sel, is_dl, deps_ok,
+                _make_action(), _make_delete()
+            )
+            card_registry.append((key, cf, action_btn, del_btn, bg_w))
+
+        return card_registry
+
     # ── Dashboard ─────────────────────────────────────────────────────────────
 
     def _build_dashboard_panel(self, parent):
