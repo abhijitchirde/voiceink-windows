@@ -667,6 +667,11 @@ class SettingsWindow:
                     badge_lbl.configure(text=f"Local  ·  {model_name}")
                 else:
                     badge_lbl.configure(text="Local  ·  no model selected")
+            elif prov == "parakeet":
+                from voiceink.services.parakeet_transcription import PARAKEET_MODELS
+                key = self._settings.get_str("parakeet_model_key")
+                label = PARAKEET_MODELS[key]["display"] if key in PARAKEET_MODELS else "no model"
+                badge_lbl.configure(text=f"Parakeet  ·  {label}")
             else:
                 labels = {"groq": "Groq", "openai": "OpenAI",
                           "deepgram": "Deepgram", "custom": "Custom"}
@@ -1096,9 +1101,11 @@ class SettingsWindow:
         prov_card = self._card(pv_inner)
 
         _saved_prov = self._settings.get_str("transcription_provider") or "groq"
-        if _saved_prov not in TRANSCRIPTION_PROVIDERS:
+        if _saved_prov not in TRANSCRIPTION_PROVIDERS and _saved_prov != "parakeet":
             _saved_prov = "groq"
-        prov_var = tk.StringVar(value=_saved_prov)
+        # When saved provider is "parakeet", show "groq" in the cloud dropdown
+        # (Parakeet is a local model, not a cloud provider — intentional)
+        prov_var = tk.StringVar(value=_saved_prov if _saved_prov in TRANSCRIPTION_PROVIDERS else "groq")
 
         # Provider picker row
         picker_row = tk.Frame(prov_card, bg=CARD_BG)
@@ -1108,8 +1115,13 @@ class SettingsWindow:
         self._combobox(picker_row, prov_var,
                        list(TRANSCRIPTION_PROVIDERS.keys()),
                        width=28).pack(side="left")
-        prov_var.trace_add("write", lambda *_: self._settings.set(
-            "transcription_provider", prov_var.get()))
+        def _on_cloud_prov_change(*_):
+            # Only write when the user is actively on the Provider tab — prevents
+            # overwriting a "parakeet" provider just by switching to this tab
+            if active_tab[0] == "Provider":
+                self._settings.set("transcription_provider", prov_var.get())
+
+        prov_var.trace_add("write", _on_cloud_prov_change)
 
         # Description label
         desc_lbl = tk.Label(prov_card, text="", bg=CARD_BG, fg=TEXT_MUTED,
