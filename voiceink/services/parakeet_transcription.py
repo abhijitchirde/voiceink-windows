@@ -260,13 +260,18 @@ class ParakeetModelCache:
                     f"Missing ONNX files in {model_dir}. "
                     "Please delete and re-download this model."
                 )
-            tokens  = str(model_dir / "tokens.txt")
+            tokens = str(model_dir / "tokens.txt")
+            # Parakeet TDT models require feature_dim=128 (not the default 80)
+            # and model_type='nemo_transducer' so sherpa-onnx reads metadata
+            # from the encoder (where vocab_size lives) rather than the decoder.
             self._model = sherpa_onnx.OfflineRecognizer.from_transducer(
                 encoder=str(encoder),
                 decoder=str(decoder),
                 joiner=str(joiner),
                 tokens=tokens,
                 num_threads=4,
+                feature_dim=128,
+                model_type="nemo_transducer",
             )
 
         elif backend == "transformers":
