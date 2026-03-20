@@ -3,6 +3,7 @@ Settings window — sidebar navigation, light mode, flat design.
 Mirrors the macOS VoiceInk layout: left nav + right content panel.
 """
 
+import os
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Callable, Optional
@@ -402,7 +403,8 @@ class SettingsWindow:
 
     def _parakeet_card(self, parent, key: str, meta: dict,
                        is_selected: bool, is_downloaded: bool,
-                       deps_ok: bool, on_action, on_delete):
+                       deps_ok: bool, on_action, on_delete,
+                       model_dir=None):
         """Render one Parakeet model card. Returns (card_frame, action_btn, del_btn, bg_widgets)."""
         bg     = ACCENT_LIGHT if is_selected else CARD_BG
         border = ACCENT       if is_selected else CARD_BORDER
@@ -479,6 +481,22 @@ class SettingsWindow:
             spacer.pack(side="left")
             bar_spacers.append(spacer)
 
+        # View storage link (only when model is downloaded)
+        storage_lbl = None
+        if is_downloaded and model_dir is not None:
+            import subprocess as _sp
+            def _open_storage(d=model_dir):
+                try:
+                    _sp.Popen(["explorer", str(d)])
+                except Exception:
+                    pass
+            storage_lbl = tk.Label(
+                left, text="\U0001f4c2  View storage", bg=bg, fg=ACCENT,
+                font=FONT_SMALL, cursor="hand2", anchor="w",
+            )
+            storage_lbl.pack(anchor="w", pady=(4, 0))
+            storage_lbl.bind("<Button-1>", lambda e: _open_storage())
+
         # Action button
         btn_wrap = tk.Frame(right, bg=bg)
         btn_wrap.pack(anchor="center")
@@ -510,7 +528,8 @@ class SettingsWindow:
 
         bg_widgets = [cf, inner_p, left, right, title_row, title_lbl,
                       meta_lbl, desc_lbl, bars_row, btn_wrap,
-                      *bar_labels, *bar_spacers]
+                      *bar_labels, *bar_spacers,
+                      *([storage_lbl] if storage_lbl else [])]
 
         return cf, action_btn, del_btn, bg_widgets
 
@@ -524,13 +543,13 @@ class SettingsWindow:
         import sys
         import threading
         from voiceink.services.parakeet_transcription import (
-            PARAKEET_MODELS, check_backend_available, check_cuda_available,
+            PARAKEET_MODELS, MODELS_DIR_PARAKEET,
+            check_backend_available, check_cuda_available,
             check_model_downloaded, download_parakeet_model, delete_parakeet_model,
             BACKEND_PIP_CMDS,
         )
         from tkinter import messagebox
 
-        IS_FROZEN = getattr(sys, 'frozen', False)
         nemo_keys = [k for k, m in PARAKEET_MODELS.items() if m["backend"] == "nemo"]
         nemo_ok   = [False]
 
@@ -546,10 +565,11 @@ class SettingsWindow:
                 import subprocess
                 pkgs = BACKEND_PIP_CMDS["nemo"]
                 flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                env = {**os.environ, "VOICEINK_PIP_SUBPROCESS": "1"}
                 proc = subprocess.Popen(
                     [sys.executable, "-m", "pip", "install"] + pkgs,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                    creationflags=flags,
+                    creationflags=flags, env=env,
                 )
                 while True:
                     line = proc.stdout.readline()
@@ -568,55 +588,45 @@ class SettingsWindow:
             threading.Thread(target=_run, daemon=True).start()
 
         def _on_install_done():
-            nemo_ok[0] = True
-            banner_ref[0][0].pack_forget()
-            refresh_all_parakeet()
+            install_btn.configure(text="\u2713 Installed", state="disabled", bg=SUCCESS,
+                                  activebackground=SUCCESS)
+            progress_lbl.configure(
+                text="Restart VoiceInk to enable NeMo models.", fg=SUCCESS)
 
         def _on_install_error(err):
             install_btn.configure(text="Retry", state="normal", bg=ERROR,
                                   activebackground="#DC2626")
             progress_lbl.configure(text=err[:80], fg=ERROR)
 
-        if IS_FROZEN:
-            info_wrap = tk.Frame(parent, bg=CONTENT_BG, padx=24)
-            info_wrap.pack(fill="x", pady=(0, 4))
-            info = tk.Frame(info_wrap, bg="#EFF6FF", highlightthickness=1,
-                            highlightbackground="#BFDBFE")
-            info.pack(fill="x")
-            info_inner = tk.Frame(info, bg="#EFF6FF", padx=14, pady=8)
-            info_inner.pack(fill="x")
-            tk.Label(info_inner,
-                     text="\u2139  Parakeet NeMo models require running VoiceInk from source.\n"
-                          "   pip install is not available in the packaged app.",
-                     bg="#EFF6FF", fg="#1D4ED8", font=FONT_SMALL,
-                     justify="left", anchor="w").pack(anchor="w")
-            nemo_ok[0] = False
+        nemo_ok[0] = check_backend_available("nemo")
+        cuda_ok = check_cuda_available()
+        cuda_text = ("\u2713  CUDA GPU detected \u2014 recommended for 0.6B+ models"
+                     if cuda_ok else
+                     "No CUDA GPU detected \u2014 only 110M model practical on CPU")
+
+        if not nemo_ok[0]:
+            import sys as _sys
+            py_ver = _sys.version_info[:2]
+            lines = [
+                "\u26a0  NeMo backend not installed",
+                "   Requires: nemo_toolkit[asr] + torch",
+                f"   {cuda_text}",
+            ]
+            warn_lines = ["   \u26a0  NeMo is Linux-primary \u2014 may require WSL2 on Windows"]
+            if py_ver >= (3, 12):
+                warn_lines.append(
+                    f"   \u26a0  Python {py_ver[0]}.{py_ver[1]} detected \u2014 "
+                    "NeMo requires Python 3.10 or 3.11"
+                )
+            nemo_pip = "pip install " + " ".join(BACKEND_PIP_CMDS["nemo"])
+            wrap, install_btn, progress_lbl, _ = self._dep_banner(
+                parent, lines, "Install NeMo + PyTorch", _install_nemo, warn_lines,
+                pip_cmd=nemo_pip,
+            )
+            banner_ref[0] = (wrap, install_btn, progress_lbl)
+        else:
             install_btn = None
             progress_lbl = None
-        else:
-            nemo_ok[0] = check_backend_available("nemo")
-            cuda_ok = check_cuda_available()
-            cuda_text = ("\u2713  CUDA GPU detected \u2014 recommended for 0.6B+ models"
-                         if cuda_ok else
-                         "No CUDA GPU detected \u2014 only 110M model practical on CPU")
-            cuda_fg = SUCCESS if cuda_ok else TEXT_MUTED
-
-            if not nemo_ok[0]:
-                lines = [
-                    "\u26a0  NeMo backend not installed",
-                    "   Requires: nemo_toolkit[asr] + torch",
-                    f"   {cuda_text}",
-                ]
-                warn_lines = ["   \u26a0  NeMo is Linux-primary \u2014 may require WSL2 on Windows"]
-                nemo_pip = "pip install " + " ".join(BACKEND_PIP_CMDS["nemo"])
-                wrap, install_btn, progress_lbl, _ = self._dep_banner(
-                    parent, lines, "Install NeMo + PyTorch", _install_nemo, warn_lines,
-                    pip_cmd=nemo_pip,
-                )
-                banner_ref[0] = (wrap, install_btn, progress_lbl)
-            else:
-                install_btn = None
-                progress_lbl = None
 
         stack = tk.Frame(parent, bg=CONTENT_BG, padx=24)
         stack.pack(fill="x", pady=(0, 8))
@@ -687,7 +697,8 @@ class SettingsWindow:
 
             cf, action_btn, del_btn, bg_w = self._parakeet_card(
                 stack, key, meta, is_sel, is_dl, deps_ok,
-                _make_action(), _make_delete()
+                _make_action(), _make_delete(),
+                model_dir=MODELS_DIR_PARAKEET / key,
             )
             card_registry.append((key, cf, action_btn, del_btn, bg_w))
 
@@ -704,13 +715,13 @@ class SettingsWindow:
         import sys
         import threading
         from voiceink.services.parakeet_transcription import (
-            PARAKEET_MODELS, check_backend_available,
+            PARAKEET_MODELS, MODELS_DIR_PARAKEET,
+            check_backend_available,
             check_model_downloaded, download_parakeet_model, delete_parakeet_model,
             BACKEND_PIP_CMDS,
         )
         from tkinter import messagebox
 
-        IS_FROZEN = getattr(sys, 'frozen', False)
         onnx_keys = [k for k, m in PARAKEET_MODELS.items() if m["backend"] == "sherpa_onnx"]
         hf_keys   = [k for k, m in PARAKEET_MODELS.items() if m["backend"] == "transformers"]
 
@@ -732,10 +743,11 @@ class SettingsWindow:
                     import subprocess
                     pkgs = BACKEND_PIP_CMDS[backend_key]
                     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                    env = {**os.environ, "VOICEINK_PIP_SUBPROCESS": "1"}
                     proc = subprocess.Popen(
                         [sys.executable, "-m", "pip", "install"] + pkgs,
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                        creationflags=flags,
+                        creationflags=flags, env=env,
                     )
                     while True:
                         line = proc.stdout.readline()
@@ -749,9 +761,10 @@ class SettingsWindow:
                     rc = proc.wait()
                     if rc == 0:
                         def _done():
-                            ok_ref[0] = True
-                            banner_ref_list[0][0].pack_forget()
-                            refresh_all_parakeet()
+                            install_btn_ref.configure(text="\u2713 Installed", state="disabled",
+                                                       bg=SUCCESS, activebackground=SUCCESS)
+                            progress_lbl_ref.configure(
+                                text="Restart VoiceInk to enable these models.", fg=SUCCESS)
                         install_btn_ref.after(0, _done)
                     else:
                         err = (proc.stderr.read() or "Unknown error")[-120:]
@@ -764,49 +777,36 @@ class SettingsWindow:
                 threading.Thread(target=_run, daemon=True).start()
             return _install
 
-        if IS_FROZEN:
-            info_wrap = tk.Frame(parent, bg=CONTENT_BG, padx=24)
-            info_wrap.pack(fill="x", pady=(0, 4))
-            info_inner = tk.Frame(info_wrap, bg="#EFF6FF", highlightthickness=1,
-                                  highlightbackground="#BFDBFE")
-            info_inner.pack(fill="x")
-            info_content = tk.Frame(info_inner, bg="#EFF6FF", padx=14, pady=8)
-            info_content.pack(fill="x")
-            tk.Label(info_content,
-                     text="\u2139  Parakeet Community models require running VoiceInk from source.",
-                     bg="#EFF6FF", fg="#1D4ED8", font=FONT_SMALL,
-                     justify="left", anchor="w").pack(anchor="w")
-        else:
-            onnx_ok[0] = check_backend_available("sherpa_onnx")
-            hf_ok[0]   = check_backend_available("transformers")
+        onnx_ok[0] = check_backend_available("sherpa_onnx")
+        hf_ok[0]   = check_backend_available("transformers")
 
-            # sherpa-onnx banner
-            onnx_banner_ref = [None]
-            if not onnx_ok[0]:
-                onnx_pip = "pip install " + " ".join(BACKEND_PIP_CMDS["sherpa_onnx"])
-                wrap, btn, prog, _ = self._dep_banner(
-                    parent,
-                    ["\u26a0  sherpa-onnx not installed",
-                     "   Requires: sherpa-onnx (no PyTorch needed, CPU-first)"],
-                    "Install sherpa-onnx",
-                    _make_install_fn("sherpa_onnx", onnx_ok, onnx_banner_ref),
-                    pip_cmd=onnx_pip,
-                )
-                onnx_banner_ref[0] = (wrap, btn, prog)
+        # sherpa-onnx banner
+        onnx_banner_ref = [None]
+        if not onnx_ok[0]:
+            onnx_pip = "pip install " + " ".join(BACKEND_PIP_CMDS["sherpa_onnx"])
+            wrap, btn, prog, _ = self._dep_banner(
+                parent,
+                ["\u26a0  sherpa-onnx not installed",
+                 "   Requires: sherpa-onnx (no PyTorch needed, CPU-first)"],
+                "Install sherpa-onnx",
+                _make_install_fn("sherpa_onnx", onnx_ok, onnx_banner_ref),
+                pip_cmd=onnx_pip,
+            )
+            onnx_banner_ref[0] = (wrap, btn, prog)
 
-            # HF Transformers banner
-            hf_banner_ref = [None]
-            if not hf_ok[0]:
-                hf_pip = "pip install " + " ".join(BACKEND_PIP_CMDS["transformers"])
-                wrap, btn, prog, _ = self._dep_banner(
-                    parent,
-                    ["\u26a0  transformers not installed (or version < 4.47)",
-                     "   Requires: transformers>=4.47 + torch + torchaudio"],
-                    "Install HF Transformers",
-                    _make_install_fn("transformers", hf_ok, hf_banner_ref),
-                    pip_cmd=hf_pip,
-                )
-                hf_banner_ref[0] = (wrap, btn, prog)
+        # HF Transformers banner
+        hf_banner_ref = [None]
+        if not hf_ok[0]:
+            hf_pip = "pip install " + " ".join(BACKEND_PIP_CMDS["transformers"])
+            wrap, btn, prog, _ = self._dep_banner(
+                parent,
+                ["\u26a0  transformers not installed (or version < 4.47)",
+                 "   Requires: transformers>=4.47 + torch + torchaudio"],
+                "Install HF Transformers",
+                _make_install_fn("transformers", hf_ok, hf_banner_ref),
+                pip_cmd=hf_pip,
+            )
+            hf_banner_ref[0] = (wrap, btn, prog)
 
         def _start_download(k, backend):
             parakeet_downloading.add(k)
@@ -877,7 +877,8 @@ class SettingsWindow:
 
             cf, action_btn, del_btn, bg_w = self._parakeet_card(
                 onnx_stack, key, meta, is_sel, is_dl, deps_ok,
-                _make_action(), _make_delete()
+                _make_action(), _make_delete(),
+                model_dir=MODELS_DIR_PARAKEET / key,
             )
             card_registry.append((key, cf, action_btn, del_btn, bg_w))
 
@@ -922,7 +923,8 @@ class SettingsWindow:
 
             cf, action_btn, del_btn, bg_w = self._parakeet_card(
                 hf_stack, key, meta, is_sel, is_dl, deps_ok,
-                _make_action(), _make_delete()
+                _make_action(), _make_delete(),
+                model_dir=MODELS_DIR_PARAKEET / key,
             )
             card_registry.append((key, cf, action_btn, del_btn, bg_w))
 
@@ -1693,11 +1695,32 @@ class SettingsWindow:
                 spacer.pack(side="left")
                 bar_spacers.append(spacer)
 
+            # View storage link (only when model is downloaded)
+            if is_dl:
+                from voiceink.services.transcription import _find_hf_cached_model
+                import subprocess as _sp
+                _manual = MODELS_DIR / key
+                _whisper_path = str(_manual) if _manual.exists() else (_find_hf_cached_model(key) or str(_manual))
+                def _open_whisper_storage(p=_whisper_path):
+                    try:
+                        _sp.Popen(["explorer", p])
+                    except Exception:
+                        pass
+                storage_lbl = tk.Label(
+                    left, text="\U0001f4c2  View storage", bg=bg, fg=ACCENT,
+                    font=FONT_SMALL, cursor="hand2", anchor="w",
+                )
+                storage_lbl.pack(anchor="w", pady=(4, 0))
+                storage_lbl.bind("<Button-1>", lambda e, fn=_open_whisper_storage: fn())
+            else:
+                storage_lbl = None
+
             # Register all background-sensitive widgets (excludes bar dots)
             model_bg_widgets[key] = [
                 cf, inner_p, left, right, title_row, title_lbl,
                 desc_lbl, bars_row,
                 *bar_labels, *bar_spacers,
+                *([storage_lbl] if storage_lbl else []),
             ]
 
             # Action button

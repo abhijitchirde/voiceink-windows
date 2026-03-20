@@ -48,7 +48,9 @@ from voiceink.app import VoiceInkApp
 
 
 def main():
-    _mutex_handle = _ensure_single_instance()  # noqa: F841 — must stay in scope
+    # Skip single-instance guard when launched as a pip subprocess by the app itself
+    if not os.environ.get("VOICEINK_PIP_SUBPROCESS"):
+        _mutex_handle = _ensure_single_instance()  # noqa: F841 — must stay in scope
     app = VoiceInkApp()
     app.run()
 
